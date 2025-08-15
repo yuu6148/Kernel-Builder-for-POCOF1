@@ -86,22 +86,46 @@ jobs:
     - name: Apply patches to fix compilation issues
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "=== Checking for problematic power supply drivers ==="
+        echo "=== Fixing problematic power supply drivers ==="
         
-        # Disable problematic power supply drivers that are causing compilation errors
+        # Completely disable the problematic qpnp-smb2 driver
         if [ -f drivers/power/supply/qcom/qpnp-smb2.c ]; then
-          echo "=== Temporarily disabling qpnp-smb2 driver due to compilation errors ==="
-          # Move the problematic file to prevent compilation
-          mv drivers/power/supply/qcom/qpnp-smb2.c drivers/power/supply/qcom/qpnp-smb2.c.disabled || true
-          # Also disable in Kconfig if it exists
-          if [ -f drivers/power/supply/qcom/Kconfig ]; then
-            sed -i 's/config QPNP_SMB2/config QPNP_SMB2_DISABLED/' drivers/power/supply/qcom/Kconfig || true
-          fi
+          echo "=== Removing qpnp-smb2.c completely ==="
+          rm -f drivers/power/supply/qcom/qpnp-smb2.c
         fi
         
-        # Check if there are other similar problematic files
-        echo "=== Checking for other potentially problematic files ==="
-        find drivers/power/supply/qcom/ -name "*.c" -type f | head -10
+        # Also remove other potentially problematic power supply files
+        find drivers/power/supply/qcom/ -name "*smb*.c" -type f -delete || true
+        find drivers/power/supply/qcom/ -name "*smb*.h" -type f -delete || true
+        
+        # Remove references from Makefile
+        if [ -f drivers/power/supply/qcom/Makefile ]; then
+          echo "=== Cleaning up qcom power supply Makefile ==="
+          sed -i '/smb/d' drivers/power/supply/qcom/Makefile || true
+          sed -i '/SMB/d' drivers/power/supply/qcom/Makefile || true
+          # Show what's left in the Makefile
+          echo "=== Remaining entries in qcom Makefile ==="
+          cat drivers/power/supply/qcom/Makefile || echo "Makefile not found or empty"
+        fi
+        
+        # Remove from Kconfig
+        if [ -f drivers/power/supply/qcom/Kconfig ]; then
+          echo "=== Cleaning up qcom power supply Kconfig ==="
+          # Create a backup and then filter out SMB-related configs
+          cp drivers/power/supply/qcom/Kconfig drivers/power/supply/qcom/Kconfig.bak
+          awk '
+          /^config.*SMB/ {skip=1; next}
+          /^config/ {skip=0}
+          !skip {print}
+          ' drivers/power/supply/qcom/Kconfig.bak > drivers/power/supply/qcom/Kconfig
+          
+          echo "=== Cleaned Kconfig entries ==="
+          head -20 drivers/power/supply/qcom/Kconfig || true
+        fi
+        
+        # Check what power supply files are left
+        echo "=== Remaining power supply files in qcom ==="
+        ls -la drivers/power/supply/qcom/ || echo "Directory not found"
 
     - name: Build Poco F1 kernel with KernelSU Next
       run: |
@@ -137,6 +161,15 @@ jobs:
         scripts/config --file out/.config --disable CONFIG_QPNP_SMB5 || true
         scripts/config --file out/.config --disable CONFIG_SMB1355_SLAVE_CHARGER || true
         scripts/config --file out/.config --disable CONFIG_SMB1390_CHARGE_PUMP_PSY || true
+        scripts/config --file out/.config --disable CONFIG_QPNP_FG_GEN3 || true
+        scripts/config --file out/.config --disable CONFIG_QPNP_FG_GEN4 || true
+        
+        # Also try to disable the entire qcom power supply subsystem if needed
+        scripts/config --file out/.config --disable CONFIG_CHARGER_QCOM_SMB2 || true
+        
+        # Show what power supply configs are still enabled
+        echo "=== Checking power supply configs ==="
+        grep -E "(POWER_SUPPLY|CHARGER|SMB|QPNP)" out/.config | head -10 || echo "No matching configs found"
         
         # Try to continue build even with some driver failures
         echo "=== Starting kernel compilation ==="
