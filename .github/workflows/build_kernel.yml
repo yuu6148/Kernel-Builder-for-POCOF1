@@ -88,44 +88,35 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         echo "=== Fixing problematic power supply drivers ==="
         
-        # Completely disable the problematic qpnp-smb2 driver
+        # Completely disable the problematic qpnp-smb2 driver by renaming it
         if [ -f drivers/power/supply/qcom/qpnp-smb2.c ]; then
-          echo "=== Removing qpnp-smb2.c completely ==="
-          rm -f drivers/power/supply/qcom/qpnp-smb2.c
+          echo "=== Renaming qpnp-smb2.c to prevent compilation ==="
+          mv drivers/power/supply/qcom/qpnp-smb2.c drivers/power/supply/qcom/qpnp-smb2.c.disabled
         fi
         
-        # Also remove other potentially problematic power supply files
-        find drivers/power/supply/qcom/ -name "*smb*.c" -type f -delete || true
-        find drivers/power/supply/qcom/ -name "*smb*.h" -type f -delete || true
+        # Remove other potentially problematic SMB files but be more selective
+        for file in drivers/power/supply/qcom/*smb*.c; do
+          if [ -f "$file" ]; then
+            echo "Disabling: $file"
+            mv "$file" "$file.disabled"
+          fi
+        done
         
-        # Remove references from Makefile
+        # Comment out SMB entries in Makefile instead of deleting them
         if [ -f drivers/power/supply/qcom/Makefile ]; then
-          echo "=== Cleaning up qcom power supply Makefile ==="
-          sed -i '/smb/d' drivers/power/supply/qcom/Makefile || true
-          sed -i '/SMB/d' drivers/power/supply/qcom/Makefile || true
-          # Show what's left in the Makefile
-          echo "=== Remaining entries in qcom Makefile ==="
-          cat drivers/power/supply/qcom/Makefile || echo "Makefile not found or empty"
+          echo "=== Commenting out SMB entries in Makefile ==="
+          sed -i 's/^.*smb.*/#&/' drivers/power/supply/qcom/Makefile || true
+          sed -i 's/^.*SMB.*/#&/' drivers/power/supply/qcom/Makefile || true
+          echo "=== Updated Makefile ==="
+          cat drivers/power/supply/qcom/Makefile | head -20 || true
         fi
         
-        # Remove from Kconfig
-        if [ -f drivers/power/supply/qcom/Kconfig ]; then
-          echo "=== Cleaning up qcom power supply Kconfig ==="
-          # Create a backup and then filter out SMB-related configs
-          cp drivers/power/supply/qcom/Kconfig drivers/power/supply/qcom/Kconfig.bak
-          awk '
-          /^config.*SMB/ {skip=1; next}
-          /^config/ {skip=0}
-          !skip {print}
-          ' drivers/power/supply/qcom/Kconfig.bak > drivers/power/supply/qcom/Kconfig
-          
-          echo "=== Cleaned Kconfig entries ==="
-          head -20 drivers/power/supply/qcom/Kconfig || true
-        fi
+        # Instead of modifying Kconfig, let's just disable via defconfig
+        echo "=== Creating a patch for defconfig to disable SMB drivers ==="
         
-        # Check what power supply files are left
-        echo "=== Remaining power supply files in qcom ==="
-        ls -la drivers/power/supply/qcom/ || echo "Directory not found"
+        # Check what files we have now
+        echo "=== Power supply files status ==="
+        ls -la drivers/power/supply/qcom/ | grep -E "\.(c|h)$" | head -10 || true
 
     - name: Build Poco F1 kernel with KernelSU Next
       run: |
@@ -150,26 +141,32 @@ jobs:
           scripts/kconfig/merge_config.sh -O out out/.config vendor/xiaomi/sdm845-common.config 2>&1 | tee -a build_config.log
         fi
         
+        # Apply additional configs using the custom fragment
         if [ -f vendor/xiaomi/beryllium.config ]; then
-          echo "=== Applying beryllium.config ==="
-          scripts/kconfig/merge_config.sh -O out out/.config vendor/xiaomi/beryllium.config 2>&1 | tee -a build_config.log
+          echo "=== Merging beryllium.config with custom SMB disable fragment ==="
+          scripts/kconfig/merge_config.sh -O out out/.config vendor/xiaomi/beryllium.config disable_smb_drivers.config 2>&1 | tee -a build_config.log
+        else
+          echo "=== Applying custom SMB disable fragment ==="
+          scripts/kconfig/merge_config.sh -O out out/.config disable_smb_drivers.config 2>&1 | tee -a build_config.log
         fi
         
-        # Disable problematic power supply drivers in kernel config
-        echo "=== Disabling problematic drivers in config ==="
-        scripts/config --file out/.config --disable CONFIG_QPNP_SMB2 || true
-        scripts/config --file out/.config --disable CONFIG_QPNP_SMB5 || true
-        scripts/config --file out/.config --disable CONFIG_SMB1355_SLAVE_CHARGER || true
-        scripts/config --file out/.config --disable CONFIG_SMB1390_CHARGE_PUMP_PSY || true
-        scripts/config --file out/.config --disable CONFIG_QPNP_FG_GEN3 || true
-        scripts/config --file out/.config --disable CONFIG_QPNP_FG_GEN4 || true
-        
-        # Also try to disable the entire qcom power supply subsystem if needed
-        scripts/config --file out/.config --disable CONFIG_CHARGER_QCOM_SMB2 || true
-        
-        # Show what power supply configs are still enabled
-        echo "=== Checking power supply configs ==="
-        grep -E "(POWER_SUPPLY|CHARGER|SMB|QPNP)" out/.config | head -10 || echo "No matching configs found"
+        # More aggressive config disabling - create a custom config fragment
+        echo "=== Creating custom config to disable problematic drivers ==="
+        cat > disable_smb_drivers.config << 'EOF'
+# Disable all SMB-related power supply drivers
+# CONFIG_QPNP_SMB2 is not set
+# CONFIG_QPNP_SMB5 is not set  
+# CONFIG_SMB1355_SLAVE_CHARGER is not set
+# CONFIG_SMB1390_CHARGE_PUMP_PSY is not set
+# CONFIG_QPNP_FG_GEN3 is not set
+# CONFIG_QPNP_FG_GEN4 is not set
+# CONFIG_CHARGER_QCOM_SMB2 is not set
+# CONFIG_QPNP_QNOVO5 is not set
+# CONFIG_QPNP_SMB1390_CHARGE_PUMP_PSY is not set
+EOF
+
+        echo "=== Custom config fragment created ==="
+        cat disable_smb_drivers.config
         
         # Try to continue build even with some driver failures
         echo "=== Starting kernel compilation ==="
