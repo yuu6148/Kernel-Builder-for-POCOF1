@@ -133,15 +133,34 @@ jobs:
         make O=out clean || echo "Clean failed, continuing..."
         
         echo "Making defconfig: $DEFCONFIG"
-        make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $DEFCONFIG || { 
+        if make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $DEFCONFIG; then
+          echo "Successfully loaded $DEFCONFIG"
+        else
           echo "Failed to make defconfig: $DEFCONFIG"
-          echo "Available defconfigs in main directory:"
-          ls arch/arm64/configs/ | grep -i beryllium || ls arch/arm64/configs/ | head -10
-          echo "Available defconfigs in vendor directory:"
-          ls arch/arm64/configs/vendor/ 2>/dev/null | head -10 || echo "No vendor directory found"
-          echo "Trying alternative defconfig paths..."
-          exit 1
-        }
+          echo "Trying fallback defconfigs..."
+          
+          # Try different defconfig options in order of preference
+          FALLBACK_CONFIGS=("defconfig" "gki_defconfig" "ranchu64_defconfig")
+          SUCCESS=false
+          
+          for config in "${FALLBACK_CONFIGS[@]}"; do
+            echo "Trying fallback config: $config"
+            if make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $config; then
+              echo "Successfully loaded fallback config: $config"
+              SUCCESS=true
+              break
+            fi
+          done
+          
+          if [ "$SUCCESS" = false ]; then
+            echo "All defconfig attempts failed!"
+            echo "Available defconfigs in main directory:"
+            ls arch/arm64/configs/ | head -10
+            echo "Available defconfigs in vendor directory:"
+            ls arch/arm64/configs/vendor/ 2>/dev/null | head -10 || echo "No vendor directory found"
+            exit 1
+          fi
+        fi
         
         echo "Starting kernel compilation..."
         echo "Build command: make -j$(nproc --all) O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD"
