@@ -70,6 +70,19 @@ jobs:
         KSU_VERSION=$(cd KernelSU-Next && expr $(/usr/bin/git rev-list --count HEAD) + 10200)
         echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
 
+    - name: Debug - List available defconfigs
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        echo "=== Available defconfigs in arch/arm64/configs ==="
+        ls -la arch/arm64/configs/ || echo "arch/arm64/configs directory not found"
+        echo "=== Available vendor configs ==="
+        find . -name "*.config" -type f | head -20
+        echo "=== Checking for vendor directory structure ==="
+        ls -la vendor/ || echo "vendor directory not found"
+        if [ -d vendor ]; then
+          find vendor/ -name "*.config" -o -name "*defconfig*" | head -20
+        fi
+
     - name: Build Poco F1 kernel with KernelSU Next
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -80,21 +93,63 @@ jobs:
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
         BA_CMD="CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi-"
         EX_CMD="LD=ld.lld LLVM=1 LLVM_IAS=1"
-        DEFCONFIG="beryllium_defconfig"
-        make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $DEFCONFIG
-        make -j$(nproc --all) O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD
+        
+        # Use vendor defconfig structure as provided by developer
+        DEFCONFIG="vendor/sdm845-perf_defconfig"
+        
+        echo "=== Building with defconfig: $DEFCONFIG ==="
+        make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $DEFCONFIG 2>&1 | tee build_config.log
+        
+        # Apply additional configs
+        if [ -f vendor/xiaomi/sdm845-common.config ]; then
+          echo "=== Applying sdm845-common.config ==="
+          scripts/kconfig/merge_config.sh -O out out/.config vendor/xiaomi/sdm845-common.config 2>&1 | tee -a build_config.log
+        fi
+        
+        if [ -f vendor/xiaomi/beryllium.config ]; then
+          echo "=== Applying beryllium.config ==="
+          scripts/kconfig/merge_config.sh -O out out/.config vendor/xiaomi/beryllium.config 2>&1 | tee -a build_config.log
+        fi
+        
+        echo "=== Starting kernel compilation ==="
+        make -j$(nproc --all) O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD 2>&1 | tee build_kernel.log
 
     - name: Check kernel output files for Poco F1 Image
       run: |
        cd $GITHUB_WORKSPACE/kernel_workspace
+       echo "=== Checking build output ==="
+       ls -la android-kernel/out/arch/arm64/boot/ || echo "Boot directory not found"
+       
        if [ -f android-kernel/out/arch/arm64/boot/Image.gz-dtb ]; then
+           echo "✅ Found Image.gz-dtb"
            echo "CHECK_IMAGE=true" >> $GITHUB_ENV
+           echo "KERNEL_IMAGE=Image.gz-dtb" >> $GITHUB_ENV
        elif [ -f android-kernel/out/arch/arm64/boot/Image ]; then
-           echo "CHECK_IMAGE=true" >> $GITHUB_ENV
+           echo "✅ Found Image"
+           echo "CHECK_IMAGE=true" >> $GITHUB_ENV  
+           echo "KERNEL_IMAGE=Image" >> $GITHUB_ENV
        else
-           echo "Kernel output file is empty"
+           echo "❌ Kernel output file is empty"
+           echo "=== Build logs ==="
+           if [ -f android-kernel/build_config.log ]; then
+             echo "Config build log:"
+             tail -50 android-kernel/build_config.log
+           fi
+           if [ -f android-kernel/build_kernel.log ]; then
+             echo "Kernel build log (last 100 lines):"
+             tail -100 android-kernel/build_kernel.log
+           fi
            exit 1
        fi
+
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Build-Logs-${{ env.BUILD_TIME }}
+        path: |
+          kernel_workspace/android-kernel/build_*.log
+          kernel_workspace/android-kernel/out/.config
 
     - name: Make AnyKernel3 with Poco F1 Image
       if: env.CHECK_IMAGE == 'true'
@@ -102,8 +157,8 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone https://github.com/osm0sis/AnyKernel3 --depth=1 AnyKernel3
         
-        # Copy kernel image (prefer Image.gz-dtb if available, otherwise Image)
-        if [ -f android-kernel/out/arch/arm64/boot/Image.gz-dtb ]; then
+        # Copy kernel image (use the detected kernel image)
+        if [ "$KERNEL_IMAGE" = "Image.gz-dtb" ]; then
             cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
         else
             cp android-kernel/out/arch/arm64/boot/Image AnyKernel3/
