@@ -66,6 +66,8 @@ jobs:
         echo "Checking defconfig availability:"
         ls -la arch/arm64/configs/ | grep -E "(beryllium|sdm845)" || echo "No beryllium/sdm845 defconfigs found, listing all:"
         ls -la arch/arm64/configs/ | head -10
+        echo "Checking vendor directory:"
+        find arch/arm64/configs/vendor/ -name "*.config" 2>/dev/null | head -5 || echo "No vendor configs found"
         cd scripts
         sed -i 's/ -dirty//g' setlocalversion || { echo "Failed to modify setlocalversion"; exit 1; }
         echo "setlocalversion modified successfully"
