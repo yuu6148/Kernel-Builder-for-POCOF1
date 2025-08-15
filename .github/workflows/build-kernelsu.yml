@@ -1,0 +1,313 @@
+name: Build Poco F1 Kernel 4.19 with KernelSU-Next
+
+on:
+  workflow_dispatch:
+
+env:
+  TZ: America/New_York
+
+jobs:
+  build:
+    name: Build Kernel by ${{ github.actor }}
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set swap to 10G
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 10
+    
+    - name: Setup build kernel environment
+      run: |
+        set -e
+        echo "BUILD_TIME=$(TZ=America/New_York date "+%y%m%d")" >> $GITHUB_ENV
+        echo "BUILD_TIME_1=$(TZ=America/New_York date "+%Y-%m-%d")" >> $GITHUB_ENV
+        echo "Setting up build environment..."
+        sudo apt-get update || { echo "Failed to update package lists"; exit 1; }
+        sudo apt-get install git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib bzip2 libbz2-dev liblz4-tool make squashfs-tools dpkg-dev libssl-dev python3 bc libc6-dev-i386 libncurses5-dev || { echo "Failed to install build dependencies"; exit 1; }
+        mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+        echo "Build environment setup completed successfully"
+    
+    - name: Download Clang from aosp
+      run: |
+        set -e
+        echo "Downloading Clang compiler..."
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r487747c clang-aosp || { echo "Failed to clone Clang repository"; exit 1; }
+        echo "Clang downloaded successfully"
+        ls -la clang-aosp/ | head -10
+    
+    - name: Download Gcc from aosp
+      run: |
+        set -e
+        echo "Downloading GCC compilers..."
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone https://gitlab.com/crdroidandroid/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc-64 || { echo "Failed to clone GCC 64-bit repository"; exit 1; }
+        git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 gcc-32 || { echo "Failed to clone GCC 32-bit repository"; exit 1; }
+        echo "GCC compilers downloaded successfully"
+        echo "GCC-64 contents:"
+        ls -la gcc-64/bin/ | head -5
+        echo "GCC-32 contents:"
+        ls -la gcc-32/bin/ | head -5
+    
+    - name: Download Poco F1 kernel source
+      run: |
+        set -e
+        echo "Downloading Poco F1 kernel source..."
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone --recursive https://github.com/duckyduckG/android_kernel_xiaomi_sdm845_419.git android-kernel --depth=1 || { echo "Failed to clone kernel repository"; exit 1; }
+        echo "Kernel source downloaded successfully"
+        echo "Kernel source structure:"
+        ls -la android-kernel/ | head -10
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        echo "Checking kernel version:"
+        head -5 Makefile || echo "Makefile not found or readable"
+        echo "Checking defconfig availability:"
+        ls -la arch/arm64/configs/ | grep -E "(beryllium|sdm845)" || echo "No beryllium/sdm845 defconfigs found in main directory"
+        echo "Checking vendor directory:"
+        ls -la arch/arm64/configs/vendor/ 2>/dev/null || echo "Vendor directory not found"
+        echo "Looking for Poco F1 specific configs:"
+        find arch/arm64/configs/vendor/ -name "*sdm845*" -o -name "*beryllium*" 2>/dev/null || echo "No vendor configs found"
+        echo "Available configs in arch/arm64/configs/:"
+        ls -la arch/arm64/configs/ | head -10
+        cd scripts
+        sed -i 's/ -dirty//g' setlocalversion || { echo "Failed to modify setlocalversion"; exit 1; }
+        echo "setlocalversion modified successfully"
+
+    - name: Setup KernelSU Next
+      run: |
+        set -e
+        echo "Setting up KernelSU-Next..."
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        rm -rf KernelSU-Next
+        echo "Downloading KernelSU-Next setup script..."
+        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash - || { echo "Failed to setup KernelSU-Next"; exit 1; }
+        echo "KernelSU-Next setup completed"
+        echo "Checking KernelSU-Next directory:"
+        ls -la KernelSU-Next/ | head -10 || echo "KernelSU-Next directory not found"
+        if [ -d "KernelSU-Next" ]; then
+          cd KernelSU-Next
+          echo "KernelSU-Next git log (last 3 commits):"
+          git log --oneline -3 || echo "Git log failed"
+          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) + 10200)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          echo "KernelSU version: $KSU_VERSION"
+        else
+          echo "ERROR: KernelSU-Next directory not created"
+          exit 1
+        fi
+
+    - name: Build Poco F1 kernel with KernelSU Next
+      run: |
+        set -e
+        echo "Starting kernel build process..."
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        export ARCH=arm64
+        export SUBARCH=arm
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc-32/bin:$PATH
+        export KBUILD_BUILD_HOST=Github-Action
+        export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
+        BA_CMD="CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi-"
+        EX_CMD="LD=ld.lld LLVM=1 LLVM_IAS=1"
+        DEFCONFIG="vendor/sdm845-perf_defconfig"
+        
+        echo "Build environment:"
+        echo "ARCH: $ARCH"
+        echo "PATH: $PATH"
+        echo "KBUILD_BUILD_HOST: $KBUILD_BUILD_HOST"
+        echo "KBUILD_BUILD_USER: $KBUILD_BUILD_USER"
+        echo "DEFCONFIG: $DEFCONFIG"
+        
+        echo "Checking compiler availability:"
+        which clang || { echo "Clang not found in PATH"; exit 1; }
+        which aarch64-linux-android-gcc || { echo "aarch64-linux-android-gcc not found"; exit 1; }
+        which arm-linux-androideabi-gcc || { echo "arm-linux-androideabi-gcc not found"; exit 1; }
+        
+        echo "Compiler versions:"
+        clang --version | head -2
+        aarch64-linux-android-gcc --version | head -1
+        arm-linux-androideabi-gcc --version | head -1
+        
+        echo "Cleaning previous build..."
+        make O=out clean || echo "Clean failed, continuing..."
+        
+        echo "Making defconfig: $DEFCONFIG"
+        make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $DEFCONFIG || { 
+          echo "Failed to make defconfig: $DEFCONFIG"
+          echo "Available defconfigs in main directory:"
+          ls arch/arm64/configs/ | grep -i beryllium || ls arch/arm64/configs/ | head -10
+          echo "Available defconfigs in vendor directory:"
+          ls arch/arm64/configs/vendor/ 2>/dev/null | head -10 || echo "No vendor directory found"
+          echo "Trying alternative defconfig paths..."
+          exit 1
+        }
+        
+        echo "Starting kernel compilation..."
+        echo "Build command: make -j$(nproc --all) O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD"
+        make -j$(nproc --all) O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD 2>&1 | tee build.log || {
+          echo "Kernel build failed!"
+          echo "=== BUILD LOG TAIL ==="
+          tail -50 build.log
+          echo "=== END BUILD LOG ==="
+          echo "=== BUILD ERROR ANALYSIS ==="
+          grep -i error build.log | tail -20 || echo "No errors found in build log"
+          exit 1
+        }
+        echo "Kernel build completed successfully!"
+
+    - name: Check kernel output files for Poco F1 Image
+      run: |
+        set -e
+        echo "Checking kernel build output..."
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        echo "Build output directory structure:"
+        ls -la android-kernel/out/ || echo "out directory not found"
+        ls -la android-kernel/out/arch/ || echo "arch directory not found"
+        ls -la android-kernel/out/arch/arm64/ || echo "arm64 directory not found"
+        ls -la android-kernel/out/arch/arm64/boot/ || echo "boot directory not found"
+        
+        echo "Looking for kernel images..."
+        find android-kernel/out -name "Image*" -type f 2>/dev/null || echo "No Image files found"
+        
+        if [ -f android-kernel/out/arch/arm64/boot/Image.gz-dtb ]; then
+            echo "SUCCESS: Image.gz-dtb found!"
+            ls -lh android-kernel/out/arch/arm64/boot/Image.gz-dtb
+            file android-kernel/out/arch/arm64/boot/Image.gz-dtb
+            echo "CHECK_IMAGE=true" >> $GITHUB_ENV
+        elif [ -f android-kernel/out/arch/arm64/boot/Image ]; then
+            echo "WARNING: Found Image instead of Image.gz-dtb"
+            ls -lh android-kernel/out/arch/arm64/boot/Image
+            file android-kernel/out/arch/arm64/boot/Image
+            echo "CHECK_IMAGE=true" >> $GITHUB_ENV
+            echo "IMAGE_TYPE=Image" >> $GITHUB_ENV
+        elif [ -f android-kernel/out/arch/arm64/boot/Image.gz ]; then
+            echo "WARNING: Found Image.gz instead of Image.gz-dtb"
+            ls -lh android-kernel/out/arch/arm64/boot/Image.gz
+            file android-kernel/out/arch/arm64/boot/Image.gz
+            echo "CHECK_IMAGE=true" >> $GITHUB_ENV
+            echo "IMAGE_TYPE=Image.gz" >> $GITHUB_ENV
+        else
+            echo "ERROR: No kernel output file found!"
+            echo "Checking for any kernel-related files:"
+            find android-kernel/out -name "*Image*" -o -name "*kernel*" -o -name "*zImage*" 2>/dev/null || echo "No kernel files found"
+            echo "=== BUILD LOG ANALYSIS ==="
+            if [ -f android-kernel/build.log ]; then
+              echo "Last 30 lines of build log:"
+              tail -30 android-kernel/build.log
+              echo "=== ERROR ANALYSIS ==="
+              grep -i "error\|failed\|stop" android-kernel/build.log | tail -10 || echo "No specific errors found"
+            fi
+            exit 1
+        fi
+
+    - name: Make AnyKernel3 with Poco F1 Image
+      if: env.CHECK_IMAGE == 'true'
+      run: |
+        set -e
+        echo "Setting up AnyKernel3..."
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone https://github.com/osm0sis/AnyKernel3 --depth=1 AnyKernel3 || { echo "Failed to clone AnyKernel3"; exit 1; }
+        cd AnyKernel3
+        
+        # Determine which image file to use
+        IMAGE_FILE="Image.gz-dtb"
+        if [ "$IMAGE_TYPE" = "Image" ]; then
+          IMAGE_FILE="Image"
+        elif [ "$IMAGE_TYPE" = "Image.gz" ]; then
+          IMAGE_FILE="Image.gz"
+        fi
+        
+        echo "Using image file: $IMAGE_FILE"
+        
+        # Configure AnyKernel3 for Poco F1
+        echo "Creating AnyKernel3 configuration..."
+        cat > anykernel.sh << 'EOF'
+        # AnyKernel3 Ramdisk Mod Script
+        # osm0sis @ xda-developers
+        
+        ## AnyKernel setup
+        # begin properties
+        properties() { '
+        kernel.string=Poco F1 KernelSU-Next Kernel
+        do.devicecheck=1
+        do.modules=0
+        do.systemless=1
+        do.cleanup=1
+        do.cleanuponabort=0
+        device.name1=beryllium
+        device.name2=Poco F1
+        device.name3=POCO F1
+        supported.versions=
+        supported.patchlevels=
+        '; } # end properties
+        
+        # shell variables
+        block=/dev/block/bootdevice/by-name/boot;
+        is_slot_device=0;
+        ramdisk_compression=auto;
+        patch_vbmeta_flag=auto;
+        
+        ## AnyKernel methods (DO NOT CHANGE)
+        # import patching functions/variables - see for reference
+        . tools/ak3-core.sh;
+        
+        ## AnyKernel file attributes
+        # set permissions/ownership for included ramdisk files
+        set_perm_recursive 0 0 755 644 $ramdisk/*;
+        set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
+        
+        ## AnyKernel boot install
+        dump_boot;
+        write_boot;
+        ## end boot install
+        EOF
+        
+        echo "Copying kernel image..."
+        if [ -f "../android-kernel/out/arch/arm64/boot/$IMAGE_FILE" ]; then
+          cp ../android-kernel/out/arch/arm64/boot/$IMAGE_FILE ./
+          echo "Successfully copied $IMAGE_FILE"
+          ls -lh $IMAGE_FILE
+        else
+          echo "ERROR: Source image file not found: ../android-kernel/out/arch/arm64/boot/$IMAGE_FILE"
+          exit 1
+        fi
+        
+        echo "Cleaning AnyKernel3..."
+        rm -rf .git* README.md
+        
+        echo "AnyKernel3 contents:"
+        ls -la
+
+    - name: Compress AnyKernel3 folder with Poco F1 Image to zip
+      run: |
+        set -e
+        echo "Creating flashable zip..."
+        cd $GITHUB_WORKSPACE/kernel_workspace/AnyKernel3
+        echo "AnyKernel3 final contents before zipping:"
+        ls -la
+        echo "Creating zip archive..."
+        zip -r $GITHUB_WORKSPACE/AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}.zip ./* || { echo "Failed to create zip"; exit 1; }
+        echo "Zip created successfully:"
+        ls -lh $GITHUB_WORKSPACE/AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}.zip
+
+    - name: Upload Poco F1 Image
+      if: env.CHECK_IMAGE == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: Image-PocoF1-KernelSU-Next_${{ env.KSUVER }}
+        path: kernel_workspace/android-kernel/out/arch/arm64/boot/Image*
+
+    - name: Upload build log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Build-Log-${{ env.BUILD_TIME }}
+        path: kernel_workspace/android-kernel/build.log
+
+    - name: Upload Poco F1 AnyKernel3 zip
+      if: env.CHECK_IMAGE == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}
+        path: AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}.zip
