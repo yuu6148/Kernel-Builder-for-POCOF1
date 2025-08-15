@@ -17,11 +17,16 @@ jobs:
         run: |
           git ls-remote --heads "${KERNEL_REPO}"
 
+      - name: Show available branches
+        run: |
+          git ls-remote --heads "${KERNEL_REPO}"
+
       - name: Clone kernel source
         run: |
-          git clone "${KERNEL_REPO}" -b "${KERNEL_BRANCH}" android-kernel --depth=1
-          cd android-kernel
-          echo "Checked out branch: $(git rev-parse --abbrev-ref HEAD)"
+          git clone "${KERNEL_REPO}" -b "${KERNEL_BRANCH}" android-kernel --depth=1 || {
+            echo "Branch may be wrong! Available branches are above."
+            exit 1
+          }
 
       - name: Install build dependencies
         run: |
