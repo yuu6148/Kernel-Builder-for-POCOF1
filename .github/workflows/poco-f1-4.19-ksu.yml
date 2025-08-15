@@ -1,0 +1,138 @@
+name: Build Poco F1 (beryllium) 4.19 Kernel with KernelSU-Next
+
+on:
+  workflow_dispatch:
+
+env:
+  TZ: America/New_York
+  KERNEL_REPO: https://github.com/duckyduckG/android_kernel_xiaomi_sdm845_419
+  KERNEL_BRANCH: beryllium
+  DEFCONFIG: gki_defconfig
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Set build metadata
+        run: |
+          echo "BUILD_TIME=$(date '+%y%m%d')" >> $GITHUB_ENV
+          echo "BUILD_DATE=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
+
+      - name: Show available branches in kernel repo
+        run: git ls-remote --heads "${KERNEL_REPO}"
+
+      - name: Clone kernel source (with branch fallback)
+        run: |
+          set -euxo pipefail
+          if git ls-remote --heads "${KERNEL_REPO}" | grep -q "refs/heads/${KERNEL_BRANCH}$"; then
+            git clone "${KERNEL_REPO}" -b "${KERNEL_BRANCH}" android-kernel --depth=1
+          else
+            echo "Branch '${KERNEL_BRANCH}' not found. Cloning default branch."
+            git clone "${KERNEL_REPO}" android-kernel --depth=1
+          fi
+          cd android-kernel
+          echo "Checked out branch: $(git rev-parse --abbrev-ref HEAD)"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib bzip2 libbz2-dev liblz4-tool make squashfs-tools dpkg-dev libssl-dev python3 bc libc6-dev-i386 libncurses5-dev
+
+      - name: Create workspace and move kernel source
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/kernel_workspace"
+          mv android-kernel "$GITHUB_WORKSPACE/kernel_workspace/"
+
+      - name: Verify defconfig exists
+        run: |
+          CONFIG_PATH="$GITHUB_WORKSPACE/kernel_workspace/android-kernel/arch/arm64/configs/${DEFCONFIG}"
+          if [ ! -f "$CONFIG_PATH" ]; then
+            echo "ERROR: Defconfig '${DEFCONFIG}' not found!"
+            ls -l "$GITHUB_WORKSPACE/kernel_workspace/android-kernel/arch/arm64/configs/"
+            exit 1
+          fi
+
+      - name: Download Clang (AOSP r487747c)
+        run: |
+          cd "$GITHUB_WORKSPACE/kernel_workspace"
+          git clone https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r487747c clang-aosp
+
+      - name: Download GCC (legacy 4.9, optional)
+        run: |
+          cd "$GITHUB_WORKSPACE/kernel_workspace"
+          git clone https://gitlab.com/crdroidandroid/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc-64
+          git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 gcc-32
+
+      - name: Setup KernelSU-Next
+        run: |
+          cd "$GITHUB_WORKSPACE/kernel_workspace/android-kernel"
+          rm -rf KernelSU-Next
+          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -
+          KSU_VERSION=$(cd KernelSU-Next && expr $(/usr/bin/git rev-list --count HEAD) + 10200)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          echo "ZIP_NAME=AK3-beryllium-4.19_KernelSU-Next_${KSU_VERSION}-${BUILD_TIME}.zip" >> $GITHUB_ENV
+
+      - name: Build kernel (beryllium 4.19 + KernelSU-Next)
+        run: |
+          cd "$GITHUB_WORKSPACE/kernel_workspace/android-kernel"
+          export ARCH=arm64
+          export SUBARCH=arm
+          export PATH="$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc-32/bin:$PATH"
+          export KBUILD_BUILD_HOST=Github-Action
+          export KBUILD_BUILD_USER="$GITHUB_ACTOR"
+          BA_CMD="CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi-"
+          EX_CMD="LD=ld.lld LLVM=1 LLVM_IAS=1"
+          make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD "${DEFCONFIG}"
+          make -j"$(nproc --all)" O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD
+
+      - name: Detect build artifacts
+        run: |
+          BOOT_OUT="$GITHUB_WORKSPACE/kernel_workspace/android-kernel/out/arch/arm64/boot"
+          cd "$BOOT_OUT"
+          if [ -f Image.gz-dtb ]; then
+            echo "KIMG=Image.gz-dtb" >> $GITHUB_ENV
+          elif [ -f Image ]; then
+            echo "KIMG=Image" >> $GITHUB_ENV
+          else
+            echo "ERROR: Kernel image not found in $BOOT_OUT"
+            ls -la
+            exit 1
+          fi
+          if [ -f dtbo.img ]; then
+            echo "HAS_DTBO=true" >> $GITHUB_ENV
+          else
+            echo "HAS_DTBO=false" >> $GITHUB_ENV
+          fi
+
+      - name: Prepare AnyKernel3
+        run: |
+          cd "$GITHUB_WORKSPACE/kernel_workspace"
+          rm -rf AnyKernel3
+          git clone https://github.com/osm0sis/AnyKernel3 --depth=1 AnyKernel3
+          sed -i 's/^device.name1=.*/device.name1=beryllium/g' AnyKernel3/anykernel.sh || echo 'device.name1=beryllium' >> AnyKernel3/anykernel.sh
+          sed -i 's/^is_slot_device=.*/is_slot_device=1/g' AnyKernel3/anykernel.sh || echo 'is_slot_device=1' >> AnyKernel3/anykernel.sh
+          cp "android-kernel/out/arch/arm64/boot/${KIMG}" AnyKernel3/
+          if [ "${HAS_DTBO}" = "true" ]; then
+            cp android-kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
+          fi
+          rm -rf AnyKernel3/.git* AnyKernel3/README.md
+
+      - name: Upload raw kernel outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image-beryllium-4.19_KernelSU-Next_${{ env.KSUVER }}
+          path: kernel_workspace/android-kernel/out/arch/arm64/boot/*
+
+      - name: Create flashable zip
+        run: |
+          cd "$GITHUB_WORKSPACE/kernel_workspace/AnyKernel3"
+          zip -r9 "../${ZIP_NAME}" .
+
+      - name: Upload flashable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: kernel_workspace/${{ env.ZIP_NAME }}
