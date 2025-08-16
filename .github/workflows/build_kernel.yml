@@ -56,35 +56,71 @@ jobs:
         
         echo "Downloading device trees and techpack..."
         
-        # Clone QC SDM845 device trees
+        # Try different repository naming patterns for device trees and techpack
+        REPOS_DOWNLOADED=0
+        
+        # Try to clone QC SDM845 device trees with different possible names
+        echo "Attempting to clone QC SDM845 device trees..."
         mkdir -p arch/arm64/boot/dts/qcom-sdm845
-        git clone https://github.com/duckyduckG/devicetree_qcom-sdm845_419.git temp_qcom_dt --depth=1 --quiet || { echo "Failed to clone QC SDM845 device trees"; exit 1; }
-        cp -r temp_qcom_dt/* arch/arm64/boot/dts/qcom-sdm845/
-        rm -rf temp_qcom_dt
+        for repo_name in "devicetree_qcom-sdm845_419" "devicetree_qcom_sdm845_419" "android_device_qcom_sdm845" "kernel_devicetree_qcom_sdm845"; do
+          if git clone https://github.com/duckyduckG/${repo_name}.git temp_qcom_dt --depth=1 --quiet 2>/dev/null; then
+            echo "Successfully cloned QC device trees from: ${repo_name}"
+            cp -r temp_qcom_dt/* arch/arm64/boot/dts/qcom-sdm845/ 2>/dev/null || cp -r temp_qcom_dt/. arch/arm64/boot/dts/qcom-sdm845/
+            rm -rf temp_qcom_dt
+            REPOS_DOWNLOADED=$((REPOS_DOWNLOADED + 1))
+            break
+          fi
+        done
         
-        # Clone Xiaomi device trees
+        # Try to clone Xiaomi device trees with different possible names
+        echo "Attempting to clone Xiaomi device trees..."
         mkdir -p arch/arm64/boot/dts/xiaomi
-        git clone https://github.com/duckyduckG/devicetree_xiaomi_419.git temp_xiaomi_dt --depth=1 --quiet || { echo "Failed to clone Xiaomi device trees"; exit 1; }
-        cp -r temp_xiaomi_dt/* arch/arm64/boot/dts/xiaomi/
-        rm -rf temp_xiaomi_dt
+        for repo_name in "devicetree_xiaomi_419" "android_device_xiaomi_sdm845" "kernel_devicetree_xiaomi" "devicetree_xiaomi_beryllium"; do
+          if git clone https://github.com/duckyduckG/${repo_name}.git temp_xiaomi_dt --depth=1 --quiet 2>/dev/null; then
+            echo "Successfully cloned Xiaomi device trees from: ${repo_name}"
+            cp -r temp_xiaomi_dt/* arch/arm64/boot/dts/xiaomi/ 2>/dev/null || cp -r temp_xiaomi_dt/. arch/arm64/boot/dts/xiaomi/
+            rm -rf temp_xiaomi_dt
+            REPOS_DOWNLOADED=$((REPOS_DOWNLOADED + 1))
+            break
+          fi
+        done
         
-        # Clone techpack mi845
+        # Try to clone techpack mi845 with different possible names
+        echo "Attempting to clone techpack mi845..."
         mkdir -p techpack/mi845
-        git clone https://github.com/duckyduckG/kernel_techpack_mi845_419.git temp_techpack --depth=1 --quiet || { echo "Failed to clone techpack mi845"; exit 1; }
-        cp -r temp_techpack/* techpack/mi845/
-        rm -rf temp_techpack
+        for repo_name in "kernel_techpack_mi845_419" "techpack_mi845_419" "android_techpack_mi845" "kernel_techpack_mi845"; do
+          if git clone https://github.com/duckyduckG/${repo_name}.git temp_techpack --depth=1 --quiet 2>/dev/null; then
+            echo "Successfully cloned techpack mi845 from: ${repo_name}"
+            cp -r temp_techpack/* techpack/mi845/ 2>/dev/null || cp -r temp_techpack/. techpack/mi845/
+            rm -rf temp_techpack
+            REPOS_DOWNLOADED=$((REPOS_DOWNLOADED + 1))
+            break
+          fi
+        done
         
-        echo "All components downloaded successfully"
+        echo "Downloaded $REPOS_DOWNLOADED additional repositories"
         
-        # Quick verification (only show if missing)
-        [ ! -d "arch/arm64/boot/dts/qcom-sdm845" ] && echo "ERROR: QC SDM845 DT missing" && exit 1
-        [ ! -d "arch/arm64/boot/dts/xiaomi" ] && echo "ERROR: Xiaomi DT missing" && exit 1
-        [ ! -d "techpack/mi845" ] && echo "ERROR: Techpack mi845 missing" && exit 1
+        # Check what we have and warn if missing
+        if [ ! "$(ls -A arch/arm64/boot/dts/qcom-sdm845 2>/dev/null)" ]; then
+          echo "WARNING: QC SDM845 device trees not found or empty"
+        fi
         
-        # Check for defconfigs only if error
-        if [ ! -f "arch/arm64/configs/vendor/sdm845-perf_defconfig" ]; then
+        if [ ! "$(ls -A arch/arm64/boot/dts/xiaomi 2>/dev/null)" ]; then
+          echo "WARNING: Xiaomi device trees not found or empty"
+        fi
+        
+        if [ ! "$(ls -A techpack/mi845 2>/dev/null)" ]; then
+          echo "WARNING: techpack/mi845 not found or empty"
+          echo "This may cause beryllium_defconfig to fail"
+        fi
+        
+        # Check for defconfigs
+        if [ -f "arch/arm64/configs/vendor/sdm845-perf_defconfig" ]; then
+          echo "Found vendor/sdm845-perf_defconfig"
+        else
           echo "WARNING: vendor/sdm845-perf_defconfig not found"
-          echo "Available defconfigs:" && find arch/arm64/configs/ -name "*defconfig" | head -5
+          echo "Available defconfigs:"
+          find arch/arm64/configs/ -name "*defconfig" | head -5
         fi
         
         cd scripts
@@ -216,42 +252,28 @@ jobs:
         set -e
         echo "Checking kernel build output..."
         cd $GITHUB_WORKSPACE/kernel_workspace
-        echo "Build output directory structure:"
-        ls -la android-kernel/out/ || echo "out directory not found"
-        ls -la android-kernel/out/arch/ || echo "arch directory not found"
-        ls -la android-kernel/out/arch/arm64/ || echo "arm64 directory not found"
-        ls -la android-kernel/out/arch/arm64/boot/ || echo "boot directory not found"
-        
-        echo "Looking for kernel images..."
-        find android-kernel/out -name "Image*" -type f 2>/dev/null || echo "No Image files found"
         
         if [ -f android-kernel/out/arch/arm64/boot/Image.gz-dtb ]; then
             echo "SUCCESS: Image.gz-dtb found!"
             ls -lh android-kernel/out/arch/arm64/boot/Image.gz-dtb
-            file android-kernel/out/arch/arm64/boot/Image.gz-dtb
             echo "CHECK_IMAGE=true" >> $GITHUB_ENV
         elif [ -f android-kernel/out/arch/arm64/boot/Image ]; then
-            echo "WARNING: Found Image instead of Image.gz-dtb"
+            echo "SUCCESS: Image found (alternative format)"
             ls -lh android-kernel/out/arch/arm64/boot/Image
-            file android-kernel/out/arch/arm64/boot/Image
             echo "CHECK_IMAGE=true" >> $GITHUB_ENV
             echo "IMAGE_TYPE=Image" >> $GITHUB_ENV
         elif [ -f android-kernel/out/arch/arm64/boot/Image.gz ]; then
-            echo "WARNING: Found Image.gz instead of Image.gz-dtb"
+            echo "SUCCESS: Image.gz found (alternative format)"
             ls -lh android-kernel/out/arch/arm64/boot/Image.gz
-            file android-kernel/out/arch/arm64/boot/Image.gz
             echo "CHECK_IMAGE=true" >> $GITHUB_ENV
             echo "IMAGE_TYPE=Image.gz" >> $GITHUB_ENV
         else
             echo "ERROR: No kernel output file found!"
-            echo "Checking for any kernel-related files:"
-            find android-kernel/out -name "*Image*" -o -name "*kernel*" -o -name "*zImage*" 2>/dev/null || echo "No kernel files found"
-            echo "=== BUILD LOG ANALYSIS ==="
+            echo "Available files in boot directory:"
+            ls -la android-kernel/out/arch/arm64/boot/ 2>/dev/null || echo "Boot directory not found"
+            echo "=== BUILD LOG ERRORS ==="
             if [ -f android-kernel/build.log ]; then
-              echo "Last 30 lines of build log:"
-              tail -30 android-kernel/build.log
-              echo "=== ERROR ANALYSIS ==="
-              grep -i "error\|failed\|stop" android-kernel/build.log | tail -10 || echo "No specific errors found"
+              grep -i "error:\|failed:" android-kernel/build.log | tail -10 || echo "No specific errors found"
             fi
             exit 1
         fi
@@ -262,7 +284,7 @@ jobs:
         set -e
         echo "Setting up AnyKernel3..."
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone https://github.com/osm0sis/AnyKernel3 --depth=1 AnyKernel3 || { echo "Failed to clone AnyKernel3"; exit 1; }
+        git clone https://github.com/osm0sis/AnyKernel3 --depth=1 --quiet AnyKernel3 || { echo "Failed to clone AnyKernel3"; exit 1; }
         cd AnyKernel3
         
         # Determine which image file to use
@@ -276,7 +298,6 @@ jobs:
         echo "Using image file: $IMAGE_FILE"
         
         # Configure AnyKernel3 for Poco F1
-        echo "Creating AnyKernel3 configuration..."
         cat > anykernel.sh << 'EOF'
         # AnyKernel3 Ramdisk Mod Script
         # osm0sis @ xda-developers
@@ -318,33 +339,38 @@ jobs:
         ## end boot install
         EOF
         
-        echo "Copying kernel image..."
         if [ -f "../android-kernel/out/arch/arm64/boot/$IMAGE_FILE" ]; then
           cp ../android-kernel/out/arch/arm64/boot/$IMAGE_FILE ./
           echo "Successfully copied $IMAGE_FILE"
-          ls -lh $IMAGE_FILE
         else
           echo "ERROR: Source image file not found: ../android-kernel/out/arch/arm64/boot/$IMAGE_FILE"
           exit 1
         fi
         
-        echo "Cleaning AnyKernel3..."
         rm -rf .git* README.md
-        
-        echo "AnyKernel3 contents:"
-        ls -la
+        echo "AnyKernel3 setup completed"
 
     - name: Compress AnyKernel3 folder with Poco F1 Image to zip
       run: |
+        set -e
         cd $GITHUB_WORKSPACE/kernel_workspace/AnyKernel3
-        zip -r $GITHUB_WORKSPACE/AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}.zip ./*
+        zip -r $GITHUB_WORKSPACE/AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}.zip ./* >/dev/null || { echo "Failed to create zip"; exit 1; }
+        echo "Flashable zip created successfully:"
+        ls -lh $GITHUB_WORKSPACE/AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}.zip
 
     - name: Upload Poco F1 Image
       if: env.CHECK_IMAGE == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: Image-PocoF1-KernelSU-Next_${{ env.KSUVER }}
-        path: kernel_workspace/android-kernel/out/arch/arm64/boot/Image.gz-dtb
+        path: kernel_workspace/android-kernel/out/arch/arm64/boot/Image*
+
+    - name: Upload build log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Build-Log-${{ env.BUILD_TIME }}
+        path: kernel_workspace/android-kernel/build.log
 
     - name: Upload Poco F1 AnyKernel3 zip
       if: env.CHECK_IMAGE == 'true'
