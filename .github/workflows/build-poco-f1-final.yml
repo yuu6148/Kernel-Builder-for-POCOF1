@@ -1,0 +1,96 @@
+name: Build Poco F1 Kernel 4.19 (Minimal + KernelSU Next)
+
+on:
+  workflow_dispatch:
+
+env:
+  TZ: America/New_York
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y git ccache build-essential zip curl python3 bc libncurses5-dev
+
+    - name: Fetch toolchains
+      run: |
+        cd $GITHUB_WORKSPACE
+        mkdir -p kernel_workspace
+        cd kernel_workspace
+        git clone --depth=1 https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r487747c clang-aosp
+        git clone --depth=1 https://gitlab.com/crdroidandroid/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc-64
+        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 gcc-32
+
+    - name: Clone kernel & clean
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone --recursive --depth=1 https://github.com/duckyduckG/android_kernel_xiaomi_sdm845_419.git android-kernel
+        cd android-kernel
+        sed -i 's/ -dirty//g' scripts/setlocalversion
+        make clean
+
+    - name: Add DTs & Techpack
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        git clone --depth=1 https://github.com/duckyduckG/devicetree_qcom-sdm845_419.git arch/arm64/boot/dts/qcom-sdm845
+        git clone --depth=1 https://github.com/duckyduckG/devicetree_xiaomi_419.git arch/arm64/boot/dts/xiaomi
+        git clone --depth=1 https://github.com/duckyduckG/kernel_techpack_mi845_419.git techpack/mi845
+
+    - name: Apply KernelSU-Next
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        curl -LSs https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh | bash -
+        cd KernelSU-Next
+        echo "KSUVER=$(git rev-list --count HEAD)" >> $GITHUB_ENV
+
+    - name: Build Image.gz-dtb
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        export ARCH=arm64 SUBARCH=arm
+        export PATH=$PWD/../clang-aosp/bin:$PWD/../gcc-64/bin:$PWD/../gcc-32/bin:$PATH
+        export KBUILD_BUILD_USER=${{ github.actor }} KBUILD_BUILD_HOST=Github
+        BA="CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi-"
+        EX="LD=ld.lld LLVM=1 LLVM_IAS=1"
+
+        echo "Using defconfig: vendor/sdm845-perf_defconfig"
+        make O=out ARCH=arm64 CC=clang $BA $EX vendor/sdm845-perf_defconfig
+
+        echo "Appending Xiaomi configs"
+        cat arch/arm64/configs/vendor/xiaomi/sdm845-common.config >> out/.config || true
+        cat arch/arm64/configs/vendor/xiaomi/beryllium.config >> out/.config || true
+        make O=out ARCH=arm64 CC=clang $BA $EX olddefconfig
+
+        echo "Building DTBs"
+        make O=out ARCH=arm64 CC=clang $BA $EX dtbs
+
+        echo "Compiling final Image.gz-dtb"
+        make -j$(nproc) O=out ARCH=arm64 CC=clang $BA $EX Image.gz-dtb 2>&1 | tee build.log
+
+        if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
+          echo "ERROR: Build failed, no Image.gz-dtb produced"
+          exit 1
+        fi
+
+    - name: Package AnyKernel3
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone --depth=1 https://github.com/osm0sis/AnyKernel3
+        cd AnyKernel3
+        cp ../android-kernel/out/arch/arm64/boot/Image.gz-dtb ./
+        sed -i 's/device.name1=.*/device.name1=beryllium/' anykernel.sh
+        zip -r $GITHUB_WORKSPACE/AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}.zip ./*
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: PocoF1-KernelBuild
+        path: |
+          kernel_workspace/android-kernel/build.log
+          AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}.zip
