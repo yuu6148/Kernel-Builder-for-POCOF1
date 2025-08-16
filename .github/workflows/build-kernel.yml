@@ -127,7 +127,6 @@ jobs:
         sed -i 's/ -dirty//g' setlocalversion || { echo "Failed to modify setlocalversion"; exit 1; }
         echo "Kernel source setup completed"
 
-    # ---------- NEW STEP TO FIX THE BUILD ERROR ----------
     - name: Patch Power Supply Driver for Build Fix
       run: |
         set -e
@@ -144,7 +143,6 @@ jobs:
         sed -i 's/->thermal_mitigation_pd_base/->thermal_mitigation/g' $BROKEN_FILE
         
         echo "Patch applied successfully."
-    # ----------------------------------------------------
 
     - name: Setup KernelSU Next
       run: |
@@ -196,6 +194,7 @@ jobs:
           echo "Power supply conflicts detected - monitor build for errors"
         fi
 
+    # ---------- BUILD STEP MODIFIED HERE ----------
     - name: Build Poco F1 kernel with KernelSU Next
       run: |
         set -e
@@ -208,39 +207,38 @@ jobs:
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
         BA_CMD="CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi-"
         EX_CMD="LD=ld.lld LLVM=1 LLVM_IAS=1"
-        DEFCONFIG="vendor/sdm845-perf_defconfig"
         
-        # Quick compiler check
-        which clang >/dev/null || { echo "Clang not found in PATH"; exit 1; }
-        which aarch64-linux-android-gcc >/dev/null || { echo "aarch64-linux-android-gcc not found"; exit 1; }
-        which arm-linux-androideabi-gcc >/dev/null || { echo "arm-linux-androideabi-gcc not found"; exit 1; }
+        # Define config files
+        BASE_DEFCONFIG="vendor/sdm845-perf_defconfig"
+        COMMON_CONFIG="vendor/xiaomi/sdm845-common.config"
+        BERYLLIUM_CONFIG="vendor/xiaomi/beryllium.config"
         
+        # Clean build directory
         make O=out clean >/dev/null 2>&1 || echo "Clean failed, continuing..."
         
-        echo "Making defconfig: $DEFCONFIG"
-        if make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $DEFCONFIG >/dev/null 2>&1; then
-          echo "Successfully loaded $DEFCONFIG"
+        # Make the base defconfig
+        echo "Making base defconfig: $BASE_DEFCONFIG"
+        make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $BASE_DEFCONFIG || { echo "Failed to make base defconfig"; exit 1; }
+        
+        # Merge the common sdm845 config
+        if [ -f "$COMMON_CONFIG" ]; then
+          echo "Merging common config: $COMMON_CONFIG"
+          scripts/kconfig/merge_config.sh -m -O out out/.config $COMMON_CONFIG
         else
-          echo "Failed to make defconfig: $DEFCONFIG, trying fallbacks..."
-          FALLBACK_CONFIGS=("defconfig" "gki_defconfig" "ranchu64_defconfig")
-          SUCCESS=false
-          
-          for config in "${FALLBACK_CONFIGS[@]}"; do
-            echo "Trying fallback config: $config"
-            if make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $config >/dev/null 2>&1; then
-              echo "Successfully loaded fallback config: $config"
-              SUCCESS=true
-              break
-            fi
-          done
-          
-          if [ "$SUCCESS" = false ]; then
-            echo "All defconfig attempts failed!"
-            echo "Available defconfigs:"
-            find arch/arm64/configs/ -name "*defconfig" | head -10
-            exit 1
-          fi
+          echo "WARNING: Common config not found at $COMMON_CONFIG"
         fi
+        
+        # Merge the beryllium-specific config
+        if [ -f "$BERYLLIUM_CONFIG" ]; then
+          echo "Merging device config: $BERYLLIUM_CONFIG"
+          scripts/kconfig/merge_config.sh -m -O out out/.config $BERYLLIUM_CONFIG
+        else
+          echo "WARNING: Beryllium config not found at $BERYLLIUM_CONFIG"
+        fi
+        
+        # Finalize the configuration
+        echo "Finalizing .config"
+        make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD olddefconfig
         
         echo "Starting kernel compilation..."
         echo "Build started at: $(date)"
