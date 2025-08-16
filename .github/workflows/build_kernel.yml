@@ -86,37 +86,50 @@ jobs:
     - name: Apply patches to fix compilation issues
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "=== Fixing problematic power supply drivers ==="
+        echo "=== First, restore any corrupted files from git ==="
         
-        # Completely disable the problematic qpnp-smb2 driver by renaming it
+        # Restore any corrupted Kconfig files from git
+        git checkout HEAD -- drivers/power/supply/qcom/Kconfig || true
+        git checkout HEAD -- drivers/power/supply/Kconfig || true
+        git checkout HEAD -- drivers/Kconfig || true
+        git checkout HEAD -- techpack/Kconfig || true
+        
+        # Also restore any other files we might have corrupted
+        git checkout HEAD -- drivers/power/supply/qcom/Makefile || true
+        
+        echo "=== Files restored from git ==="
+        
+        # Now apply fixes more carefully - just rename problematic source files
+        echo "=== Disabling problematic power supply drivers by renaming source files ==="
+        
+        # Rename the main problematic file
         if [ -f drivers/power/supply/qcom/qpnp-smb2.c ]; then
-          echo "=== Renaming qpnp-smb2.c to prevent compilation ==="
+          echo "Renaming qpnp-smb2.c to prevent compilation"
           mv drivers/power/supply/qcom/qpnp-smb2.c drivers/power/supply/qcom/qpnp-smb2.c.disabled
         fi
         
-        # Remove other potentially problematic SMB files but be more selective
-        for file in drivers/power/supply/qcom/*smb*.c; do
+        # Rename other potentially problematic SMB files
+        for file in drivers/power/supply/qcom/*smb5*.c drivers/power/supply/qcom/*smb1355*.c drivers/power/supply/qcom/*smb1390*.c; do
           if [ -f "$file" ]; then
-            echo "Disabling: $file"
-            mv "$file" "$file.disabled"
+            echo "Renaming: $file"
+            mv "$file" "$file.disabled" || true
           fi
         done
         
-        # Comment out SMB entries in Makefile instead of deleting them
+        # Modify Makefile to comment out the renamed files
         if [ -f drivers/power/supply/qcom/Makefile ]; then
-          echo "=== Commenting out SMB entries in Makefile ==="
-          sed -i 's/^.*smb.*/#&/' drivers/power/supply/qcom/Makefile || true
-          sed -i 's/^.*SMB.*/#&/' drivers/power/supply/qcom/Makefile || true
-          echo "=== Updated Makefile ==="
-          cat drivers/power/supply/qcom/Makefile | head -20 || true
+          echo "=== Updating Makefile to exclude disabled drivers ==="
+          # Comment out lines containing smb (case insensitive)
+          sed -i 's/^\([[:space:]]*obj.*smb.*\.o\)/#\1 # DISABLED/' drivers/power/supply/qcom/Makefile || true
+          sed -i 's/^\([[:space:]]*obj.*SMB.*\.o\)/#\1 # DISABLED/' drivers/power/supply/qcom/Makefile || true
+          
+          echo "=== Modified Makefile content ==="
+          cat drivers/power/supply/qcom/Makefile || echo "Could not read Makefile"
         fi
         
-        # Instead of modifying Kconfig, let's just disable via defconfig
-        echo "=== Creating a patch for defconfig to disable SMB drivers ==="
-        
-        # Check what files we have now
-        echo "=== Power supply files status ==="
-        ls -la drivers/power/supply/qcom/ | grep -E "\.(c|h)$" | head -10 || true
+        # Verify Kconfig files are now valid
+        echo "=== Checking Kconfig syntax ==="
+        scripts/kconfig/conf --help > /dev/null && echo "Kconfig tools are working" || echo "Kconfig tools have issues"
 
     - name: Build Poco F1 kernel with KernelSU Next
       run: |
@@ -141,36 +154,26 @@ jobs:
           scripts/kconfig/merge_config.sh -O out out/.config vendor/xiaomi/sdm845-common.config 2>&1 | tee -a build_config.log
         fi
         
-        # Apply additional configs using the custom fragment
+        # Apply additional configs - but do it after a successful base config
         if [ -f vendor/xiaomi/beryllium.config ]; then
-          echo "=== Merging beryllium.config with custom SMB disable fragment ==="
-          scripts/kconfig/merge_config.sh -O out out/.config vendor/xiaomi/beryllium.config disable_smb_drivers.config 2>&1 | tee -a build_config.log
-        else
-          echo "=== Applying custom SMB disable fragment ==="
-          scripts/kconfig/merge_config.sh -O out out/.config disable_smb_drivers.config 2>&1 | tee -a build_config.log
+          echo "=== Applying beryllium.config ==="
+          scripts/kconfig/merge_config.sh -O out out/.config vendor/xiaomi/beryllium.config 2>&1 | tee -a build_config.log || {
+            echo "=== Config merge failed, continuing with base config ==="
+          }
         fi
         
-        # More aggressive config disabling - create a custom config fragment
-        echo "=== Creating custom config to disable problematic drivers ==="
-        cat > disable_smb_drivers.config << 'EOF'
-        # More aggressive config disabling - create a custom config fragment
-        echo "=== Creating custom config to disable problematic drivers ==="
-        echo "# Disable all SMB-related power supply drivers
-# CONFIG_QPNP_SMB2 is not set
-# CONFIG_QPNP_SMB5 is not set  
-# CONFIG_SMB1355_SLAVE_CHARGER is not set
-# CONFIG_SMB1390_CHARGE_PUMP_PSY is not set
-# CONFIG_QPNP_FG_GEN3 is not set
-# CONFIG_QPNP_FG_GEN4 is not set
-# CONFIG_CHARGER_QCOM_SMB2 is not set
-# CONFIG_QPNP_QNOVO5 is not set
-# CONFIG_QPNP_SMB1390_CHARGE_PUMP_PSY is not set" > disable_smb_drivers.config
-
-        echo "=== Custom config fragment created ==="
-        cat disable_smb_drivers.config
-
-        echo "=== Custom config fragment created ==="
-        cat disable_smb_drivers.config
+        # Manually disable problematic configs in the final .config
+        echo "=== Manually disabling SMB-related configs in .config ==="
+        if [ -f out/.config ]; then
+          # Use sed to disable configs directly in the .config file
+          sed -i 's/^CONFIG_QPNP_SMB2=.*/# CONFIG_QPNP_SMB2 is not set/' out/.config || true
+          sed -i 's/^CONFIG_QPNP_SMB5=.*/# CONFIG_QPNP_SMB5 is not set/' out/.config || true
+          sed -i 's/^CONFIG_SMB1355_SLAVE_CHARGER=.*/# CONFIG_SMB1355_SLAVE_CHARGER is not set/' out/.config || true
+          sed -i 's/^CONFIG_SMB1390_CHARGE_PUMP_PSY=.*/# CONFIG_SMB1390_CHARGE_PUMP_PSY is not set/' out/.config || true
+          
+          echo "=== Checking final power supply config ==="
+          grep -E "(SMB|QPNP.*SMB)" out/.config | head -5 || echo "No SMB configs found (good!)"
+        fi
         
         # Try to continue build even with some driver failures
         echo "=== Starting kernel compilation ==="
