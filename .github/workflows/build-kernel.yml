@@ -1,4 +1,4 @@
-name: Build Poco F1 Kernel 4.19 with KernelSU-Next
+# Name: Build Poco F1 Kernel 4.19 with KernelSU-Next
 
 on:
   workflow_dispatch:
@@ -126,6 +126,25 @@ jobs:
         cd scripts
         sed -i 's/ -dirty//g' setlocalversion || { echo "Failed to modify setlocalversion"; exit 1; }
         echo "Kernel source setup completed"
+
+    # ---------- NEW STEP TO FIX THE BUILD ERROR ----------
+    - name: Patch Power Supply Driver for Build Fix
+      run: |
+        set -e
+        echo "Applying patch to qpnp-smb2.c to fix build errors..."
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        
+        # This file has the errors
+        BROKEN_FILE="drivers/power/supply/qcom/qpnp-smb2.c"
+        
+        # Replace all the non-existent members with the one the compiler suggested
+        sed -i 's/->thermal_mitigation_dc/->thermal_mitigation/g' $BROKEN_FILE
+        sed -i 's/->thermal_mitigation_qc3/->thermal_mitigation/g' $BROKEN_FILE
+        sed -i 's/->thermal_mitigation_qc2/->thermal_mitigation/g' $BROKEN_FILE
+        sed -i 's/->thermal_mitigation_pd_base/->thermal_mitigation/g' $BROKEN_FILE
+        
+        echo "Patch applied successfully."
+    # ----------------------------------------------------
 
     - name: Setup KernelSU Next
       run: |
@@ -351,6 +370,7 @@ jobs:
         echo "AnyKernel3 setup completed"
 
     - name: Compress AnyKernel3 folder with Poco F1 Image to zip
+      if: env.CHECK_IMAGE == 'true'
       run: |
         set -e
         cd $GITHUB_WORKSPACE/kernel_workspace/AnyKernel3
@@ -378,3 +398,4 @@ jobs:
       with:
         name: AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}
         path: AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}.zip
+        
