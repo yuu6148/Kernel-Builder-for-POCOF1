@@ -20,164 +20,131 @@ jobs:
     
     - name: Setup build kernel environment
       run: |
+        set -e
         echo "BUILD_TIME=$(TZ=America/New_York date "+%y%m%d")" >> $GITHUB_ENV
         echo "BUILD_TIME_1=$(TZ=America/New_York date "+%Y-%m-%d")" >> $GITHUB_ENV
-        sudo apt-get update
-        sudo apt-get install git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib bzip2 libbz2-dev liblz4-tool make squashfs-tools dpkg-dev libssl-dev python3 bc libc6-dev-i386 libncurses5-dev
+        echo "Setting up build environment..."
+        sudo apt-get update -qq
+        sudo apt-get install -qq git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib bzip2 libbz2-dev liblz4-tool make squashfs-tools dpkg-dev libssl-dev python3 bc libc6-dev-i386 libncurses5-dev || { echo "Failed to install build dependencies"; exit 1; }
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+        echo "Build environment setup completed successfully"
     
     - name: Download Clang from aosp
       run: |
+        set -e
+        echo "Downloading Clang compiler..."
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r487747c clang-aosp
+        git clone https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r487747c clang-aosp --quiet || { echo "Failed to clone Clang repository"; exit 1; }
+        echo "Clang downloaded successfully"
     
     - name: Download Gcc from aosp
       run: |
+        set -e
+        echo "Downloading GCC compilers..."
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone https://gitlab.com/crdroidandroid/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc-64
-        git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 gcc-32
+        git clone https://gitlab.com/crdroidandroid/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc-64 --quiet || { echo "Failed to clone GCC 64-bit repository"; exit 1; }
+        git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 gcc-32 --quiet || { echo "Failed to clone GCC 32-bit repository"; exit 1; }
+        echo "GCC compilers downloaded successfully"
     
-    - name: Download kernel source and device trees
+    - name: Download Poco F1 kernel source
       run: |
+        set -e
+        echo "Downloading Poco F1 kernel source..."
         cd $GITHUB_WORKSPACE/kernel_workspace
-        # Clone main kernel source
-        git clone https://github.com/duckyduckG/android_kernel_xiaomi_sdm845_419.git android-kernel --depth=1
+        git clone --recursive https://github.com/duckyduckG/android_kernel_xiaomi_sdm845_419.git android-kernel --depth=1 --quiet || { echo "Failed to clone kernel repository"; exit 1; }
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # Clone device trees
-        git clone https://github.com/duckyduckG/devicetree_qcom-sdm845_419.git qcom-sdm845-dt --depth=1
-        git clone https://github.com/duckyduckG/devicetree_xiaomi_419.git xiaomi-dt --depth=1
-        git clone https://github.com/duckyduckG/kernel_techpack_mi845_419.git techpack-mi845 --depth=1
+        echo "Downloading device trees and techpack..."
         
-        # Setup device tree structure
-        mkdir -p $GITHUB_WORKSPACE/kernel_workspace/android-kernel/arch/arm64/boot/dts/qcom-sdm845
-        mkdir -p $GITHUB_WORKSPACE/kernel_workspace/android-kernel/arch/arm64/boot/dts/xiaomi
-        mkdir -p $GITHUB_WORKSPACE/kernel_workspace/android-kernel/techpack/mi845
+        # Clone QC SDM845 device trees
+        mkdir -p arch/arm64/boot/dts/qcom-sdm845
+        git clone https://github.com/duckyduckG/devicetree_qcom-sdm845_419.git temp_qcom_dt --depth=1 --quiet || { echo "Failed to clone QC SDM845 device trees"; exit 1; }
+        cp -r temp_qcom_dt/* arch/arm64/boot/dts/qcom-sdm845/
+        rm -rf temp_qcom_dt
         
-        # Copy device trees to kernel source
-        cp -r qcom-sdm845-dt/* android-kernel/arch/arm64/boot/dts/qcom-sdm845/
-        cp -r xiaomi-dt/* android-kernel/arch/arm64/boot/dts/xiaomi/
-        cp -r techpack-mi845/* android-kernel/techpack/mi845/
+        # Clone Xiaomi device trees
+        mkdir -p arch/arm64/boot/dts/xiaomi
+        git clone https://github.com/duckyduckG/devicetree_xiaomi_419.git temp_xiaomi_dt --depth=1 --quiet || { echo "Failed to clone Xiaomi device trees"; exit 1; }
+        cp -r temp_xiaomi_dt/* arch/arm64/boot/dts/xiaomi/
+        rm -rf temp_xiaomi_dt
         
-        # Clean up setlocalversion
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel/scripts
-        sed -i 's/ -dirty//g' setlocalversion
+        # Clone techpack mi845
+        mkdir -p techpack/mi845
+        git clone https://github.com/duckyduckG/kernel_techpack_mi845_419.git temp_techpack --depth=1 --quiet || { echo "Failed to clone techpack mi845"; exit 1; }
+        cp -r temp_techpack/* techpack/mi845/
+        rm -rf temp_techpack
+        
+        echo "All components downloaded successfully"
+        
+        # Quick verification (only show if missing)
+        [ ! -d "arch/arm64/boot/dts/qcom-sdm845" ] && echo "ERROR: QC SDM845 DT missing" && exit 1
+        [ ! -d "arch/arm64/boot/dts/xiaomi" ] && echo "ERROR: Xiaomi DT missing" && exit 1
+        [ ! -d "techpack/mi845" ] && echo "ERROR: Techpack mi845 missing" && exit 1
+        
+        # Check for defconfigs only if error
+        if [ ! -f "arch/arm64/configs/vendor/sdm845-perf_defconfig" ]; then
+          echo "WARNING: vendor/sdm845-perf_defconfig not found"
+          echo "Available defconfigs:" && find arch/arm64/configs/ -name "*defconfig" | head -5
+        fi
+        
+        cd scripts
+        sed -i 's/ -dirty//g' setlocalversion || { echo "Failed to modify setlocalversion"; exit 1; }
+        echo "Kernel source setup completed"
 
     - name: Setup KernelSU Next
       run: |
+        set -e
+        echo "Setting up KernelSU-Next..."
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         rm -rf KernelSU-Next
-        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -
-        KSU_VERSION=$(cd KernelSU-Next && expr $(/usr/bin/git rev-list --count HEAD) + 10200)
-        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash - >/dev/null 2>&1 || { echo "Failed to setup KernelSU-Next"; exit 1; }
+        echo "KernelSU-Next setup completed"
+        
+        if [ -d "KernelSU-Next" ]; then
+          cd KernelSU-Next
+          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) + 10200)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          echo "KernelSU version: $KSU_VERSION"
+        else
+          echo "ERROR: KernelSU-Next directory not created"
+          exit 1
+        fi
 
-    - name: Debug - Check kernel source structure
+    - name: Check for power supply driver conflicts
       run: |
+        set -e
+        echo "Checking for power supply driver conflicts..."
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "=== Available defconfigs in arch/arm64/configs ==="
-        ls -la arch/arm64/configs/ 2>/dev/null || echo "arch/arm64/configs directory not found"
-        echo "=== Available vendor configs ==="
-        find . -name "*.config" -type f | head -10
-        echo "=== Checking for vendor directory structure ==="
-        ls -la vendor/ 2>/dev/null || echo "vendor directory not found"
-        if [ -d vendor ]; then
-          find vendor/ -name "*defconfig*" -o -name "*.config" | head -10
-        fi
-        echo "=== Checking power supply drivers ==="
-        ls -la drivers/power/supply/qcom/ 2>/dev/null || echo "qcom power supply directory not found"
-
-    - name: Fix power supply driver dependencies
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "=== Analyzing power supply driver dependencies ==="
         
-        # Check what power supply drivers exist
-        if [ -d drivers/power/supply/qcom ]; then
-          echo "Available QCOM power supply drivers:"
-          ls -la drivers/power/supply/qcom/*.c | head -10
-          
-          echo "Checking for votable driver..."
-          if [ -f drivers/power/supply/qcom/qpnp-pmic-votable.c ]; then
-            echo "✅ Votable driver found"
-          else
-            echo "❌ Votable driver missing - this will cause build failures"
-            echo "Looking for alternative votable implementations..."
-            find drivers/ -name "*votable*" -type f 2>/dev/null || echo "No votable files found"
-          fi
-          
-          echo "Checking for step charging driver..."
-          find drivers/power/supply/qcom/ -name "*step*" -o -name "*jeita*" | head -5
+        # Only report potential conflicts, don't spam logs
+        POWER_CONFLICTS=0
+        
+        # Check for common conflict patterns
+        if find . -name "*smb*charger*" | head -1 | grep -q .; then
+          echo "WARNING: SMB charger drivers detected - potential conflict"
+          POWER_CONFLICTS=1
         fi
         
-        echo "=== Applying power supply driver fixes ==="
-        
-        # Create a simple votable stub if the real driver doesn't exist
-        if [ ! -f drivers/power/supply/qcom/qpnp-pmic-votable.c ]; then
-          echo "Creating votable stub driver..."
-          cat > drivers/power/supply/qcom/qpnp-pmic-votable.c << 'EOF'
-        /* Votable stub driver for compilation */
-        #include <linux/module.h>
-        #include <linux/kernel.h>
-        
-        struct votable {
-            int dummy;
-        };
-        
-        struct votable *find_votable(const char *name) { return NULL; }
-        struct votable *create_votable(const char *name, int type, 
-                                     int (*callback)(struct votable *, void *, 
-                                                   int, const char *), 
-                                     void *data) { return NULL; }
-        int vote(struct votable *votable, const char *client, bool enabled, int val) { return 0; }
-        void destroy_votable(struct votable *votable) { }
-        
-        EXPORT_SYMBOL(find_votable);
-        EXPORT_SYMBOL(create_votable);
-        EXPORT_SYMBOL(vote);
-        EXPORT_SYMBOL(destroy_votable);
-        
-        MODULE_LICENSE("GPL");
-        MODULE_DESCRIPTION("Votable stub driver");
-        EOF
+        if find drivers/ -name "*power*" -o -name "*battery*" -o -name "*charger*" 2>/dev/null | wc -l | awk '{if($1 > 10) print "WARNING: Multiple power drivers detected ("$1" files) - potential conflicts"}' | grep -q .; then
+          echo "WARNING: Multiple power supply drivers detected"
+          POWER_CONFLICTS=1
         fi
         
-        # Create step charging stub if missing
-        if [ ! -f drivers/power/supply/qcom/step-chg-jeita.c ] && [ ! -f drivers/power/supply/qcom/qcom-step-chg.c ]; then
-          echo "Creating step charging stub..."
-          cat > drivers/power/supply/qcom/step-chg-jeita.c << 'EOF'
-        /* Step charging stub driver */
-        #include <linux/module.h>
-        #include <linux/kernel.h>
-        #include <linux/power_supply.h>
-        
-        int qcom_step_chg_init(struct device *dev, bool step_chg_enable, 
-                             bool sw_jeita_enable, bool jeita_arb_enable)
-        {
-            return 0;
-        }
-        EXPORT_SYMBOL(qcom_step_chg_init);
-        
-        MODULE_LICENSE("GPL");
-        MODULE_DESCRIPTION("Step charging stub driver");
-        EOF
+        # Check techpack for power drivers
+        if [ -d "techpack/mi845" ] && find techpack/mi845/ -name "*power*" -o -name "*battery*" -o -name "*charger*" 2>/dev/null | head -1 | grep -q .; then
+          echo "INFO: Techpack mi845 contains power supply drivers"
         fi
         
-        # Update Makefile to include our stub drivers
-        echo "Updating power supply Makefile..."
-        if [ -f drivers/power/supply/qcom/Makefile ]; then
-          # Add our stub drivers to the Makefile if they're not already there
-          if ! grep -q "qpnp-pmic-votable" drivers/power/supply/qcom/Makefile; then
-            echo "obj-\$(CONFIG_QPNP_FG_GEN3) += qpnp-pmic-votable.o" >> drivers/power/supply/qcom/Makefile
-          fi
-          if ! grep -q "step-chg-jeita" drivers/power/supply/qcom/Makefile; then
-            echo "obj-\$(CONFIG_QPNP_FG_GEN3) += step-chg-jeita.o" >> drivers/power/supply/qcom/Makefile
-          fi
-          
-          echo "Updated Makefile contents:"
-          tail -10 drivers/power/supply/qcom/Makefile
+        if [ $POWER_CONFLICTS -eq 0 ]; then
+          echo "No obvious power supply driver conflicts detected"
+        else
+          echo "Power supply conflicts detected - monitor build for errors"
         fi
 
     - name: Build Poco F1 kernel with KernelSU Next
       run: |
+        set -e
+        echo "Starting kernel build process..."
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         export ARCH=arm64
         export SUBARCH=arm
@@ -186,121 +153,130 @@ jobs:
         export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
         BA_CMD="CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi-"
         EX_CMD="LD=ld.lld LLVM=1 LLVM_IAS=1"
+        DEFCONFIG="vendor/sdm845-perf_defconfig"
         
-        # Determine which defconfig to use
-        if [ -f vendor/sdm845-perf_defconfig ]; then
-          DEFCONFIG="vendor/sdm845-perf_defconfig"
-          echo "Using vendor defconfig: $DEFCONFIG"
-        elif [ -f arch/arm64/configs/sdm845-perf_defconfig ]; then
-          DEFCONFIG="sdm845-perf_defconfig"
-          echo "Using arch defconfig: $DEFCONFIG"
-        elif [ -f arch/arm64/configs/beryllium_defconfig ]; then
-          DEFCONFIG="beryllium_defconfig"
-          echo "Using beryllium defconfig: $DEFCONFIG"
+        # Quick compiler check
+        which clang >/dev/null || { echo "Clang not found in PATH"; exit 1; }
+        which aarch64-linux-android-gcc >/dev/null || { echo "aarch64-linux-android-gcc not found"; exit 1; }
+        which arm-linux-androideabi-gcc >/dev/null || { echo "arm-linux-androideabi-gcc not found"; exit 1; }
+        
+        make O=out clean >/dev/null 2>&1 || echo "Clean failed, continuing..."
+        
+        echo "Making defconfig: $DEFCONFIG"
+        if make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $DEFCONFIG >/dev/null 2>&1; then
+          echo "Successfully loaded $DEFCONFIG"
         else
-          echo "No suitable defconfig found, using generic"
-          DEFCONFIG="defconfig"
-        fi
-        
-        echo "=== Building with defconfig: $DEFCONFIG ==="
-        make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $DEFCONFIG 2>&1 | tee build_config.log
-        
-        # Apply additional configs if they exist
-        if [ -f vendor/xiaomi/sdm845-common.config ]; then
-          echo "=== Applying sdm845-common.config ==="
-          scripts/kconfig/merge_config.sh -O out out/.config vendor/xiaomi/sdm845-common.config 2>&1 | tee -a build_config.log || echo "Config merge failed, continuing"
-        fi
-        
-        if [ -f vendor/xiaomi/beryllium.config ]; then
-          echo "=== Applying beryllium.config ==="
-          scripts/kconfig/merge_config.sh -O out out/.config vendor/xiaomi/beryllium.config 2>&1 | tee -a build_config.log || echo "Config merge failed, continuing"
-        fi
-        
-        # Ensure problematic configs are disabled
-        echo "=== Adjusting power supply configs ==="
-        if [ -f out/.config ]; then
-          # Comment out or disable problematic drivers that we don't have
-          sed -i 's/^CONFIG_QPNP_SMB2=.*/# CONFIG_QPNP_SMB2 is not set/' out/.config 2>/dev/null || true
-          sed -i 's/^CONFIG_QPNP_SMB5=.*/# CONFIG_QPNP_SMB5 is not set/' out/.config 2>/dev/null || true
-          sed -i 's/^CONFIG_SMB1355_SLAVE_CHARGER=.*/# CONFIG_SMB1355_SLAVE_CHARGER is not set/' out/.config 2>/dev/null || true
-          sed -i 's/^CONFIG_SMB1390_CHARGE_PUMP_PSY=.*/# CONFIG_SMB1390_CHARGE_PUMP_PSY is not set/' out/.config 2>/dev/null || true
+          echo "Failed to make defconfig: $DEFCONFIG, trying fallbacks..."
+          FALLBACK_CONFIGS=("defconfig" "gki_defconfig" "ranchu64_defconfig")
+          SUCCESS=false
           
-          # Make sure fuel gauge is enabled (since we created stubs for its dependencies)
-          if grep -q "CONFIG_QPNP_FG_GEN3" out/.config; then
-            sed -i 's/# CONFIG_QPNP_FG_GEN3 is not set/CONFIG_QPNP_FG_GEN3=y/' out/.config 2>/dev/null || true
+          for config in "${FALLBACK_CONFIGS[@]}"; do
+            echo "Trying fallback config: $config"
+            if make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD $config >/dev/null 2>&1; then
+              echo "Successfully loaded fallback config: $config"
+              SUCCESS=true
+              break
+            fi
+          done
+          
+          if [ "$SUCCESS" = false ]; then
+            echo "All defconfig attempts failed!"
+            echo "Available defconfigs:"
+            find arch/arm64/configs/ -name "*defconfig" | head -10
+            exit 1
+          fi
+        fi
+        
+        echo "Starting kernel compilation..."
+        echo "Build started at: $(date)"
+        
+        # Capture build output but only show errors/warnings and progress
+        make -j$(nproc --all) O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD 2>&1 | tee build.log | grep -E "(CC|LD|AR|GEN|HOSTCC|Error|error|Warning|warning|Failed|failed|\[.*%\])" || {
+          echo "Kernel build failed!"
+          echo "=== RECENT BUILD OUTPUT ==="
+          tail -30 build.log | grep -E "(error|Error|failed|Failed|undefined|redefinition)"
+          
+          echo "=== POWER SUPPLY ERROR CHECK ==="
+          if grep -qi "power.*error\|battery.*error\|charger.*error\|duplicate.*power" build.log; then
+            echo "Power supply driver conflicts detected in build log!"
+            grep -i "power.*error\|battery.*error\|charger.*error" build.log | tail -5
+          else
+            echo "No power supply specific errors found"
           fi
           
-          echo "Final power supply related configs:"
-          grep -E "(QPNP_FG|SMB|STEP_CHG)" out/.config | head -10 || echo "No power configs found"
-        fi
-        
-        # Build the kernel
-        echo "=== Starting kernel compilation ==="
-        make -j$(nproc --all) O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD 2>&1 | tee build_kernel.log || {
-          echo "=== First build attempt failed, trying with fewer jobs ==="
-          make -j4 O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD 2>&1 | tee -a build_kernel.log || {
-            echo "=== Second build attempt failed, trying single-threaded ==="
-            make -j1 O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD 2>&1 | tee -a build_kernel.log || {
-              echo "=== Build failed completely ==="
-              echo "Last 50 lines of build log:"
-              tail -50 build_kernel.log
-              exit 1
-            }
-          }
+          echo "=== GENERAL ERRORS ==="
+          grep -i "error:\|undefined reference\|multiple definition" build.log | tail -10 || echo "No specific error patterns found"
+          exit 1
         }
+        
+        echo "Kernel build completed successfully at: $(date)"
 
     - name: Check kernel output files for Poco F1 Image
       run: |
-       cd $GITHUB_WORKSPACE/kernel_workspace
-       echo "=== Checking build output ==="
-       ls -la android-kernel/out/arch/arm64/boot/ 2>/dev/null || echo "Boot directory not found"
-       
-       if [ -f android-kernel/out/arch/arm64/boot/Image.gz-dtb ]; then
-           echo "✅ Found Image.gz-dtb"
-           echo "CHECK_IMAGE=true" >> $GITHUB_ENV
-           echo "KERNEL_IMAGE=Image.gz-dtb" >> $GITHUB_ENV
-           ls -lh android-kernel/out/arch/arm64/boot/Image.gz-dtb
-       elif [ -f android-kernel/out/arch/arm64/boot/Image ]; then
-           echo "✅ Found Image"
-           echo "CHECK_IMAGE=true" >> $GITHUB_ENV  
-           echo "KERNEL_IMAGE=Image" >> $GITHUB_ENV
-           ls -lh android-kernel/out/arch/arm64/boot/Image
-       else
-           echo "❌ No kernel image found"
-           echo "Available files in out/arch/arm64/boot/:"
-           ls -la android-kernel/out/arch/arm64/boot/ 2>/dev/null || echo "Directory does not exist"
-           exit 1
-       fi
-
-    - name: Upload build logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: Build-Logs-${{ env.BUILD_TIME }}
-        path: |
-          kernel_workspace/android-kernel/build_*.log
-          kernel_workspace/android-kernel/out/.config
+        set -e
+        echo "Checking kernel build output..."
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        echo "Build output directory structure:"
+        ls -la android-kernel/out/ || echo "out directory not found"
+        ls -la android-kernel/out/arch/ || echo "arch directory not found"
+        ls -la android-kernel/out/arch/arm64/ || echo "arm64 directory not found"
+        ls -la android-kernel/out/arch/arm64/boot/ || echo "boot directory not found"
+        
+        echo "Looking for kernel images..."
+        find android-kernel/out -name "Image*" -type f 2>/dev/null || echo "No Image files found"
+        
+        if [ -f android-kernel/out/arch/arm64/boot/Image.gz-dtb ]; then
+            echo "SUCCESS: Image.gz-dtb found!"
+            ls -lh android-kernel/out/arch/arm64/boot/Image.gz-dtb
+            file android-kernel/out/arch/arm64/boot/Image.gz-dtb
+            echo "CHECK_IMAGE=true" >> $GITHUB_ENV
+        elif [ -f android-kernel/out/arch/arm64/boot/Image ]; then
+            echo "WARNING: Found Image instead of Image.gz-dtb"
+            ls -lh android-kernel/out/arch/arm64/boot/Image
+            file android-kernel/out/arch/arm64/boot/Image
+            echo "CHECK_IMAGE=true" >> $GITHUB_ENV
+            echo "IMAGE_TYPE=Image" >> $GITHUB_ENV
+        elif [ -f android-kernel/out/arch/arm64/boot/Image.gz ]; then
+            echo "WARNING: Found Image.gz instead of Image.gz-dtb"
+            ls -lh android-kernel/out/arch/arm64/boot/Image.gz
+            file android-kernel/out/arch/arm64/boot/Image.gz
+            echo "CHECK_IMAGE=true" >> $GITHUB_ENV
+            echo "IMAGE_TYPE=Image.gz" >> $GITHUB_ENV
+        else
+            echo "ERROR: No kernel output file found!"
+            echo "Checking for any kernel-related files:"
+            find android-kernel/out -name "*Image*" -o -name "*kernel*" -o -name "*zImage*" 2>/dev/null || echo "No kernel files found"
+            echo "=== BUILD LOG ANALYSIS ==="
+            if [ -f android-kernel/build.log ]; then
+              echo "Last 30 lines of build log:"
+              tail -30 android-kernel/build.log
+              echo "=== ERROR ANALYSIS ==="
+              grep -i "error\|failed\|stop" android-kernel/build.log | tail -10 || echo "No specific errors found"
+            fi
+            exit 1
+        fi
 
     - name: Make AnyKernel3 with Poco F1 Image
       if: env.CHECK_IMAGE == 'true'
       run: |
+        set -e
+        echo "Setting up AnyKernel3..."
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone https://github.com/osm0sis/AnyKernel3 --depth=1 AnyKernel3
-        
-        # Copy kernel image (use the detected kernel image)
-        if [ "$KERNEL_IMAGE" = "Image.gz-dtb" ]; then
-            cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
-        else
-            cp android-kernel/out/arch/arm64/boot/Image AnyKernel3/
-        fi
-        
-        # Copy dtbo if available
-        if [ -f android-kernel/out/arch/arm64/boot/dtbo.img ]; then
-            cp android-kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
-        fi
-        
-        # Setup AnyKernel3 configuration for Poco F1
+        git clone https://github.com/osm0sis/AnyKernel3 --depth=1 AnyKernel3 || { echo "Failed to clone AnyKernel3"; exit 1; }
         cd AnyKernel3
+        
+        # Determine which image file to use
+        IMAGE_FILE="Image.gz-dtb"
+        if [ "$IMAGE_TYPE" = "Image" ]; then
+          IMAGE_FILE="Image"
+        elif [ "$IMAGE_TYPE" = "Image.gz" ]; then
+          IMAGE_FILE="Image.gz"
+        fi
+        
+        echo "Using image file: $IMAGE_FILE"
+        
+        # Configure AnyKernel3 for Poco F1
+        echo "Creating AnyKernel3 configuration..."
         cat > anykernel.sh << 'EOF'
         # AnyKernel3 Ramdisk Mod Script
         # osm0sis @ xda-developers
@@ -308,7 +284,7 @@ jobs:
         ## AnyKernel setup
         # begin properties
         properties() { '
-        kernel.string=Poco F1 KernelSU-Next by nobiti
+        kernel.string=Poco F1 KernelSU-Next Kernel
         do.devicecheck=1
         do.modules=0
         do.systemless=1
@@ -316,14 +292,14 @@ jobs:
         do.cleanuponabort=0
         device.name1=beryllium
         device.name2=Poco F1
-        device.name3=POCOPHONE F1
-        supported.versions=9.0-14.0
+        device.name3=POCO F1
+        supported.versions=
         supported.patchlevels=
         '; } # end properties
         
         # shell variables
         block=/dev/block/bootdevice/by-name/boot;
-        is_slot_device=1;
+        is_slot_device=0;
         ramdisk_compression=auto;
         patch_vbmeta_flag=auto;
         
@@ -336,31 +312,43 @@ jobs:
         set_perm_recursive 0 0 755 644 $ramdisk/*;
         set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
         
-        ## AnyKernel install
+        ## AnyKernel boot install
         dump_boot;
         write_boot;
-        ## end install
+        ## end boot install
         EOF
         
+        echo "Copying kernel image..."
+        if [ -f "../android-kernel/out/arch/arm64/boot/$IMAGE_FILE" ]; then
+          cp ../android-kernel/out/arch/arm64/boot/$IMAGE_FILE ./
+          echo "Successfully copied $IMAGE_FILE"
+          ls -lh $IMAGE_FILE
+        else
+          echo "ERROR: Source image file not found: ../android-kernel/out/arch/arm64/boot/$IMAGE_FILE"
+          exit 1
+        fi
+        
+        echo "Cleaning AnyKernel3..."
         rm -rf .git* README.md
+        
+        echo "AnyKernel3 contents:"
+        ls -la
 
     - name: Compress AnyKernel3 folder with Poco F1 Image to zip
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/AnyKernel3
-        zip -r $GITHUB_WORKSPACE/AK3-PocoF1-4.19_KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}.zip ./*
+        zip -r $GITHUB_WORKSPACE/AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}.zip ./*
 
-    - name: Upload Poco F1 Kernel Image
+    - name: Upload Poco F1 Image
       if: env.CHECK_IMAGE == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: Image-PocoF1-4.19_KernelSU-Next_${{ env.KSUVER }}
-        path: |
-          kernel_workspace/android-kernel/out/arch/arm64/boot/Image*
-          kernel_workspace/android-kernel/out/arch/arm64/boot/dtbo.img
+        name: Image-PocoF1-KernelSU-Next_${{ env.KSUVER }}
+        path: kernel_workspace/android-kernel/out/arch/arm64/boot/Image.gz-dtb
 
     - name: Upload Poco F1 AnyKernel3 zip
       if: env.CHECK_IMAGE == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: AK3-PocoF1-4.19_KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}
-        path: AK3-PocoF1-4.19_KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}.zip
+        name: AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}
+        path: AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}-${{ env.BUILD_TIME }}.zip
