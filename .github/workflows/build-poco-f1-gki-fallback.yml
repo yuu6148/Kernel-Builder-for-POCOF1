@@ -1,0 +1,103 @@
+name: Build Poco F1 Kernel 4.19 with KernelSU-Next (with GKI fallback)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup build environment
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y git ccache automake flex lzop bison gperf \
+          build-essential zip curl zlib1g-dev g++-multilib bzip2 libbz2-dev \
+          liblz4-tool make squashfs-tools dpkg-dev libssl-dev python3 bc \
+          libc6-dev-i386 libncurses5-dev wget unzip
+
+        mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+
+    - name: Download toolchains
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone --depth=1 https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r487747c clang-aosp
+        git clone --depth=1 https://gitlab.com/crdroidandroid/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc-64
+        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 gcc-32
+
+    - name: Download kernel source
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone --recursive --depth=1 https://github.com/duckyduckG/android_kernel_xiaomi_sdm845_419.git android-kernel
+        cd android-kernel
+        sed -i 's/ -dirty//g' scripts/setlocalversion
+        make clean
+
+    - name: Download device trees and techpack
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        git clone --depth=1 https://github.com/duckyduckG/devicetree_qcom-sdm845_419 arch/arm64/boot/dts/qcom-sdm845
+        git clone --depth=1 https://github.com/duckyduckG/devicetree_xiaomi_419 arch/arm64/boot/dts/xiaomi
+        git clone --depth=1 https://github.com/duckyduckG/kernel_techpack_mi845_419 techpack/mi845
+
+    - name: Setup KernelSU-Next
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -
+
+    - name: Build kernel with vendor defconfig (try first)
+      id: build_vendor
+      run: |
+        set -e
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        export ARCH=arm64
+        export SUBARCH=arm
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc-64/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc-32/bin:$PATH
+        export KBUILD_BUILD_HOST=Github-Action
+        export KBUILD_BUILD_USER=${{ github.actor }}
+
+        BA_CMD="CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi-"
+        EX_CMD="LD=ld.lld LLVM=1 LLVM_IAS=1"
+
+        echo "Trying vendor/sdm845-perf_defconfig ..."
+        if make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD vendor/sdm845-perf_defconfig; then
+          cat arch/arm64/configs/vendor/xiaomi/sdm845-common.config >> out/.config || true
+          cat arch/arm64/configs/vendor/xiaomi/beryllium.config >> out/.config || true
+          make O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD olddefconfig
+          make -j$(nproc --all) O=out ARCH=arm64 CC=clang $BA_CMD $EX_CMD 2>&1 | tee build.log
+          echo "VENDOR_BUILD_OK=true" >> $GITHUB_ENV
+        else
+          echo "Vendor defconfig build failed, will try GKI"
+          echo "VENDOR_BUILD_OK=false" >> $GITHUB_ENV
+        fi
+
+    - name: Build kernel with GKI fallback
+      if: env.VENDOR_BUILD_OK == 'false'
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        chmod +x build/build.sh
+        BUILD_CONFIG=build.config.gki.aarch64 ./build/build.sh 2>&1 | tee build.log
+        echo "GKI build completed"
+
+    - name: Package AnyKernel3
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone --depth=1 https://github.com/osm0sis/AnyKernel3
+        cd AnyKernel3
+
+        IMG=$(ls ../android-kernel/out/arch/arm64/boot/Image* | head -n1)
+        cp $IMG ./
+        sed -i 's/device.name1=.*/device.name1=beryllium/' anykernel.sh
+
+        zip -r $GITHUB_WORKSPACE/AK3-PocoF1-KernelSU-Next.zip ./* >/dev/null
+        echo "Flashable zip created"
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: PocoF1-KernelSU-Next
+        path: |
+          kernel_workspace/android-kernel/build.log
+          AK3-PocoF1-KernelSU-Next.zip
