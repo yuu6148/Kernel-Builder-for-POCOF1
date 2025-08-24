@@ -17,7 +17,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y git ccache build-essential zip curl python3 bc libncurses5-dev
+        sudo apt-get install -y git ccache build-essential zip curl python3 bc libncurses5-dev llvm
 
     - name: Fetch toolchains
       run: |
