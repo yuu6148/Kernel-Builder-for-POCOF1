@@ -43,12 +43,12 @@ jobs:
         git clone --depth=1 https://github.com/duckyduckG/devicetree_xiaomi_419.git arch/arm64/boot/dts/xiaomi
         git clone --depth=1 https://github.com/duckyduckG/kernel_techpack_mi845_419.git techpack/mi845
 
-    - name: Apply KernelSU-Next
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        curl -LSs https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh | bash -
-        cd KernelSU-Next
-        echo "KSUVER=$(git rev-list --count HEAD)" >> $GITHUB_ENV
+    #- name: Apply KernelSU-Next
+      #run: |
+        #cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        #curl -LSs https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh | bash -
+        #cd KernelSU-Next
+        #echo "KSUVER=$(git rev-list --count HEAD)" >> $GITHUB_ENV
 
     - name: Build Image.gz-dtb
       run: |
