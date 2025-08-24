@@ -1,4 +1,4 @@
-name: Build Poco F1 Kernel 4.19 (Minimal + KernelSU Next)
+name: Build Poco F1 Kernel 4.19 (Minimal)
 
 on:
   workflow_dispatch:
@@ -85,7 +85,7 @@ jobs:
         cd AnyKernel3
         cp ../android-kernel/out/arch/arm64/boot/Image.gz-dtb ./
         sed -i 's/device.name1=.*/device.name1=beryllium/' anykernel.sh
-        zip -r $GITHUB_WORKSPACE/AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}.zip ./*
+        zip -r $GITHUB_WORKSPACE/AK3-PocoF1_${{ env.KSUVER }}.zip ./*
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -93,4 +93,4 @@ jobs:
         name: PocoF1-KernelBuild
         path: |
           kernel_workspace/android-kernel/build.log
-          AK3-PocoF1-KernelSU-Next_${{ env.KSUVER }}.zip
+          AK3-PocoF1_${{ env.KSUVER }}.zip
