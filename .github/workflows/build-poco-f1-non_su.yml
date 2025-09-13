@@ -1,4 +1,4 @@
-name: Build Poco F1 Kernel 4.19 (Minimal)
+name: Build Poco F1 Kernel 4.19
 
 on:
   workflow_dispatch:
@@ -46,7 +46,7 @@ jobs:
     - name: Apply KernelSU-Next
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        curl -LSs https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh | bash -
+        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s v1.0.8
         cd KernelSU-Next
         echo "KSUVER=$(git rev-list --count HEAD)" >> $GITHUB_ENV
 
