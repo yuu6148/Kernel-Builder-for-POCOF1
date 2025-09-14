@@ -46,7 +46,23 @@ jobs:
     - name: Apply SU
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s v1.0.0
+        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" |
+        bash -s v1.0.3
+
+    - name: Patch KernelSU for older kernel
+      run: |
+        TARGET_FILE="$GITHUB_WORKSPACE/kernel_workspace/android-kernel/drivers/kernelsu/core_hook.c"
+        echo "Applying compatibility patch to $TARGET_FILE"
+        # Add version header for LINUX_VERSION_CODE macro
+        sed -i '/#include <linux\/fs.h>/a #include <linux/version.h>' $TARGET_FILE
+        # Replace the function call with a version-conditional block
+        sed -i 's/ret = path_umount(&path, MNT_FORCE);/\
+        #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)\
+            ret = path_umount(\&path, MNT_FORCE);\
+        #else\
+            ret = vfs_umount(path.mnt, MNT_FORCE);\
+        #endif/' $TARGET_FILE
+        echo "Patch applied successfully."
 
     - name: Build Image.gz-dtb
       run: |
@@ -71,7 +87,8 @@ jobs:
         echo "Compiling final Image.gz-dtb"
         make -j$(nproc) O=out ARCH=arm64 CC=clang $BA $EX Image.gz-dtb 2>&1 | tee build.log
 
-        if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
+        if [ ! -f out/arch/arm64/boot/Image.gz-dtb ];
+        then
           echo "ERROR: Build failed, no Image.gz-dtb produced"
           exit 1
         fi
@@ -83,12 +100,12 @@ jobs:
         cd AnyKernel3
         cp ../android-kernel/out/arch/arm64/boot/Image.gz-dtb ./
         sed -i 's/device.name1=.*/device.name1=beryllium/' anykernel.sh
-        zip -r $GITHUB_WORKSPACE/AK3-PocoF1_${{ env.KSUVER }}.zip ./*
+        zip -r $GITHUB_WORKSPACE/AK3-PocoF1.zip ./*
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: PocoF1-KernelBuild
         path: |
-          kernel_workspace/android-kernel/build.log
-          AK3-PocoF1_${{ env.KSUVER }}.zip
+          ${{ github.workspace }}/kernel_workspace/android-kernel/build.log
+          ${{ github.workspace }}/AK3-PocoF1.zip
