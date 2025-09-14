@@ -1,4 +1,4 @@
-name: Build Poco F1 Kernel 4.19
+name: Build Poco F1 Kernel 4.19 (SU)
 
 on:
   workflow_dispatch:
