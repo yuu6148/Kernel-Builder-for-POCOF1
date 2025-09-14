@@ -47,14 +47,7 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s v1.0.3
-
-    - name: Patch KernelSU for 4.19
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel/drivers/kernelsu
-        sed -i '/#include <linux\/mount.h>/a \
-        if LINUX_VERSION_CODE < KERNEL_VERSION(5,9,0) \ static inline int path_umount(struct path *path, int flags) { \ return do_umount(path->mnt, flags, 0);  } \
-        endif' core_hook.c
-
+        
     - name: Build Image.gz-dtb
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
