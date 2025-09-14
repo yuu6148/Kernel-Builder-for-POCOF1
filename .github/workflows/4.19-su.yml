@@ -51,7 +51,6 @@ jobs:
     - name: Patch KernelSU for 4.19
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        chmod +x $GITHUB_WORKSPACE/.github/scripts/patch_kernelsu.sh
         bash $GITHUB_WORKSPACE/.github/scripts/patch_kernelsu.sh
 
     - name: Build Image.gz-dtb
