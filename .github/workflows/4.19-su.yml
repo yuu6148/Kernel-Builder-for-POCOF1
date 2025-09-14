@@ -49,11 +49,11 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" |
         bash -s v1.0.3
 
-    - name: Patch KernelSU for older kernel
+    - name: Patch KernelSU for Older Kernel
       run: |
-        TARGET_FILE="$GITHUB_WORKSPACE/kernel_workspace/android-kernel/drivers/kernelsu/core_hook.c"
+        TARGET_FILE="kernel_workspace/android-kernel/drivers/kernelsu/core_hook.c"
         echo "Applying compatibility patch to $TARGET_FILE"
-        # Add version header for LINUX_VERSION_CODE macro
+        # Add the version.h header after fs.h
         sed -i '/#include <linux\/fs.h>/a #include <linux/version.h>' $TARGET_FILE
         # Replace the function call with a version-conditional block
         sed -i 's/ret = path_umount(&path, MNT_FORCE);/\
@@ -63,6 +63,7 @@ jobs:
             ret = vfs_umount(path.mnt, MNT_FORCE);\
         #endif/' $TARGET_FILE
         echo "Patch applied successfully."
+
 
     - name: Build Image.gz-dtb
       run: |
