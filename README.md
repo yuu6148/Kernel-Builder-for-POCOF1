@@ -1,2 +1,2 @@
 # Poco-F1-Kernel-Builder
-Creates a patched flashble Kernel for Poco F1
+Creates a flashble Kernel for Poco F1
