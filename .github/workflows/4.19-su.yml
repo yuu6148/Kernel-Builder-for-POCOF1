@@ -59,12 +59,12 @@ jobs:
         #include <linux/fs.h>
         #include <linux/mount.h>
  
-        +#if LINUX_VERSION_CODE < KERNEL_VERSION(5,9,0)
+         +#if LINUX_VERSION_CODE < KERNEL_VERSION(5,9,0)
         +static inline int path_umount(struct path *path, int flags)
         +{
         +    return do_umount(path->mnt, flags, 0);
         +}
-        +#endif
+         +#endif
         EOF
         git apply ksu-compat.patch
 
