@@ -1,4 +1,4 @@
-name: Build Poco F1 Kernel 4.19 (Minimal)
+name: Build Poco F1 Kernel 4.19
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout
@@ -31,7 +31,7 @@ jobs:
     - name: Clone kernel & clean
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone --recursive --depth=1 --branch perf-bpf_5.4 https://github.com/Aghora7/android_kernel_xiaomi_sdm845_419.git android-kernel
+        git clone --recursive --depth=1 --single-branch https://github.com/yuu6148/android_kernel_xiaomi_sdm845_419.git android-kernel
         cd android-kernel
         sed -i 's/ -dirty//g' scripts/setlocalversion
         make clean
@@ -43,12 +43,10 @@ jobs:
         git clone --depth=1 https://github.com/duckyduckG/devicetree_xiaomi_419.git arch/arm64/boot/dts/xiaomi
         git clone --depth=1 https://github.com/duckyduckG/kernel_techpack_mi845_419.git techpack/mi845
 
-    #- name: Apply KernelSU-Next
-      #run: |
-        #cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        #curl -LSs https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh | bash -
-        #cd KernelSU-Next
-        #echo "KSUVER=$(git rev-list --count HEAD)" >> $GITHUB_ENV
+    - name: Apply SukiSU-Ultra
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s nongki
 
     - name: Build Image.gz-dtb
       run: |
