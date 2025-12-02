@@ -36,15 +36,15 @@ jobs:
         sed -i 's/ -dirty//g' scripts/setlocalversion
         make clean
 
-    #- name: Add DTs & Techpack
-      #run: |
-        #cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+    - name: Add DTs & Techpack
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         #rm -rf arch/arm64/boot/dts/qcom-sdm845
-        #git clone --depth=1 https://github.com/duckyduckG/devicetree_qcom-sdm845_419.git arch/arm64/boot/dts/qcom-sdm845
+        git clone --depth=1 https://github.com/duckyduckG/devicetree_qcom-sdm845_419.git arch/arm64/boot/dts/qcom-sdm845
         #rm -rf arch/arm64/boot/dts/xiaomi
-        #git clone --depth=1 https://github.com/duckyduckG/devicetree_xiaomi_419.git arch/arm64/boot/dts/xiaomi
+        git clone --depth=1 https://github.com/duckyduckG/devicetree_xiaomi_419.git arch/arm64/boot/dts/xiaomi
         #rm -rf techpack/mi845
-        #git clone --depth=1 https://github.com/duckyduckG/kernel_techpack_mi845_419.git techpack/mi845
+        git clone --depth=1 https://github.com/duckyduckG/kernel_techpack_mi845_419.git techpack/mi845
 
     #- name: Apply KernelSU-Next
       #run: |
