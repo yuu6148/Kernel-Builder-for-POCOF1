@@ -50,8 +50,6 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
-        cd KernelSU-Next
-        echo "KSUVER=$(git rev-list --count HEAD)" >> $GITHUB_ENV
 
     - name: Build Image.gz-dtb
       run: |
