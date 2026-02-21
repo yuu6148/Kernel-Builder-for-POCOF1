@@ -31,7 +31,7 @@ jobs:
     - name: Clone kernel & clean
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone --recursive --depth=1 --single-branch https://github.com/mt6873-dev/android_kernel_xiaomi_sdm845.git android-kernel
+        git clone --recursive --depth=1 --single-branch https://github.com/yuu6148/419.git android-kernel
         cd android-kernel
         sed -i 's/ -dirty//g' scripts/setlocalversion
         make clean
