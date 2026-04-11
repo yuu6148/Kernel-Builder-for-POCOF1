@@ -74,7 +74,7 @@ jobs:
         echo "Appending Xiaomi configs"
         cat arch/arm64/configs/vendor/xiaomi/sdm845-common.config >> out/.config || true
         cat arch/arm64/configs/vendor/xiaomi/beryllium.config >> out/.config || true
-        cat arch/arm64/configs/vendor/xiaomi/lxc.config >> out/.config || truep
+        cat arch/arm64/configs/vendor/xiaomi/lxc.config >> out/.config || true
         make O=out ARCH=arm64 CC=clang $BA $EX olddefconfig
 
         echo "Building DTBs"
