@@ -61,8 +61,17 @@ jobs:
         EX="LD=ld.lld LLVM=1 LLVM_IAS=1"
 
         echo "Using defconfig: vendor/sdm845-perf_defconfig"
+        echo "CONFIG_COMPAT_VDSO=y" >> ./arch/arm64/configs/vendor/sdm845-perf_defconfig
+        echo "CONFIG_LTO_NONE=n" >> ./arch/arm64/configs/vendor/sdm845-perf_defconfig
+        echo "CONFIG_SHADOW_CALL_STACK=n" >> ./arch/arm64/configs/vendor/sdm845-perf_defconfig
+        echo "CONFIG_RELR=n" >> ./arch/arm64/configs/vendor/sdm845-perf_defconfig
+        echo "CONFIG_EROFS_FS=y" >> ./arch/arm64/configs/vendor/sdm845-perf_defconfig
+        echo "CONFIG_EROFS_FS_ZIP=y" >> ./arch/arm64/configs/vendor/sdm845-perf_defconfig
+        echo "CONFIG_EROFS_FS_XATTR=y" >> ./arch/arm64/configs/vendor/sdm845-perf_defconfig
+        echo "CONFIG_EROFS_FS_POSIX_ACL=y" >> ./arch/arm64/configs/vendor/sdm845-perf_defconfig
+        echo "CONFIG_EROFS_FS_SECURITY=y" >> ./arch/arm64/configs/vendor/sdm845-perf_defconfig    
         make O=out ARCH=arm64 CC=clang $BA $EX vendor/sdm845-perf_defconfig
-
+        
         echo "Appending Xiaomi configs"
         cat arch/arm64/configs/vendor/xiaomi/sdm845-common.config >> out/.config || true
         cat arch/arm64/configs/vendor/xiaomi/beryllium.config >> out/.config || true
