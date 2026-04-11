@@ -34,6 +34,10 @@ jobs:
         git clone --recursive --depth=1 --single-branch https://github.com/yuu8614/android_kernel_xiaomi_sdm845_419.git android-kernel
         cd android-kernel
         sed -i 's/ -dirty//g' scripts/setlocalversion
+        cd kernel_workspace/android-kernel
+        git submodule update --init --recursive
+        cd KernelSU-Next
+        bash scripts/integrate.sh
         make clean
 
     - name: Add DTs & Techpack
