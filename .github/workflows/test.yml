@@ -34,7 +34,6 @@ jobs:
         git clone https://github.com/duckyduckG/android_kernel_xiaomi_sdm845_419.git -b perf-SukiSU --depth=1 android-kernel
         cd android-kernel
         sed -i 's/ -dirty//g' scripts/setlocalversion
-        bash KernelSU-Next/kernel/setup.sh
         make clean
 
     - name: Add DTs & Techpack
